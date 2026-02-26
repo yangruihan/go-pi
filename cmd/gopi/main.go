@@ -377,7 +377,7 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 		switch event.Type {
 		case agent.AgentEventStart, agent.AgentEventTurnStart:
 		default:
-			indicator.StopAndClear()
+			indicator.Stop()
 		}
 		handleOutputEvent(event, renderer)
 	})
@@ -428,12 +428,23 @@ func (ti *thinkingIndicator) StopAndClear() {
 	if ti == nil {
 		return
 	}
+	ti.Stop()
+	select {
+	case <-ti.doneCh:
+	default:
+		<-ti.doneCh
+	}
+	fmt.Print("\r                \r")
+}
+
+func (ti *thinkingIndicator) Stop() {
+	if ti == nil {
+		return
+	}
 	if !ti.stopped.CompareAndSwap(false, true) {
 		return
 	}
 	close(ti.stopCh)
-	<-ti.doneCh
-	fmt.Print("\r                \r")
 }
 
 // handleSlashCommand 处理 slash 命令，返回是否已处理
