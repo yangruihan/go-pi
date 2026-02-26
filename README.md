@@ -50,6 +50,9 @@ echo "写一个快速排序" | ./build/gopi.exe --print
 - `--tui`：启用 TUI
 - `--print`：非交互模式
 - `--perf`：运行性能测量
+- `--no-spinner`：禁用“思考中”加载动画
+
+说明：交互模式下每轮请求有超时保护（由配置 `ollama.timeout` 控制），超时会自动中止当前轮并提示重试。
 
 ## Slash 命令
 
