@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -68,12 +70,18 @@ type ExtensionsConfig struct {
 	AfterResponse string `yaml:"after_response"`
 }
 
+// LoadSources 记录配置加载来源
+type LoadSources struct {
+	ConfigPaths []string
+	ModelPaths  []string
+}
+
 // Default 返回默认配置
 func Default() Config {
 	return Config{
 		Ollama: OllamaConfig{
 			Host:        "http://localhost:11434",
-			Model:       "qwen2.5-coder:7b",
+			Model:       "qwen3:8b",
 			Timeout:     120 * time.Second,
 			ToolCalling: "auto",
 		},
@@ -118,30 +126,75 @@ func ConfigDir() (string, error) {
 	return filepath.Join(home, ".gopi"), nil
 }
 
+// ProjectConfigPath 返回项目级配置路径：<cwd>/.gopi/config.yaml
+func ProjectConfigPath(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Join(cwd, ".gopi", "config.yaml")
+}
+
+// ProjectConfigPaths 返回项目级配置候选路径（按优先顺序）
+func ProjectConfigPaths(cwd string) []string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(cwd, ".gopi", "config.yaml"),
+		filepath.Join(cwd, "config.yaml"),
+	}
+}
+
 // Load 从默认路径加载配置文件
 // 如果文件不存在，返回默认配置
 func Load() (Config, error) {
-	cfg := Default()
+	cwd, _ := os.Getwd()
+	cfg, _, err := LoadWithSources(cwd)
+	return cfg, err
+}
 
-	dir, err := ConfigDir()
-	if err != nil {
-		return cfg, nil // 无法获取 home dir，使用默认配置
+// LoadWithSources 按顺序加载配置并返回来源：默认值 -> home -> project
+func LoadWithSources(cwd string) (Config, LoadSources, error) {
+	cfg := Default()
+	sources := LoadSources{}
+
+	if dir, err := ConfigDir(); err == nil {
+		homeCfg := filepath.Join(dir, "config.yaml")
+		if loaded, err := mergeConfigFile(&cfg, homeCfg); err != nil {
+			return cfg, sources, err
+		} else if loaded {
+			sources.ConfigPaths = append(sources.ConfigPaths, homeCfg)
+		}
 	}
 
-	path := filepath.Join(dir, "config.yaml")
+	for _, projectCfg := range ProjectConfigPaths(cwd) {
+		if loaded, err := mergeConfigFile(&cfg, projectCfg); err != nil {
+			return cfg, sources, err
+		} else if loaded {
+			sources.ConfigPaths = append(sources.ConfigPaths, projectCfg)
+		}
+	}
+
+	return cfg, sources, nil
+}
+
+func mergeConfigFile(cfg *Config, path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return cfg, nil // 文件不存在，使用默认配置
+		return false, nil
 	}
 	if err != nil {
-		return cfg, err
+		return false, fmt.Errorf("read config %s: %w", path, err)
 	}
-
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
+	data, err = normalizeYAMLBytes(data)
+	if err != nil {
+		return false, fmt.Errorf("decode config %s: %w", path, err)
 	}
-
-	return cfg, nil
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return false, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // Save 保存配置到默认路径

@@ -245,6 +245,86 @@ func TestLoopMultiTurn(t *testing.T) {
 	assert.Equal(t, AgentEventEnd, events[len(events)-1].Type)
 }
 
+// TestLoopReActFallback 测试最小 ReAct fallback（无原生 tool call 事件）
+func TestLoopReActFallback(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []mockResponse{
+			buildTextResponse("Thought: 先读取文件\nAction: read_file\nAction Input: {\"path\":\"test.go\"}"),
+			buildTextResponse("读取完成"),
+		},
+	}
+
+	executor := newMockExecutor()
+	executor.results["read_file"] = "package main"
+
+	messages := []llm.Message{{Role: "user", Content: "读取 test.go"}}
+	config := DefaultLoopConfig("test-model")
+
+	ch := RunLoop(context.Background(), messages, config, client, executor)
+
+	var events []AgentEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	assert.Len(t, executor.calls, 1)
+	assert.Equal(t, "read_file", executor.calls[0].name)
+
+	hasToolCall := false
+	hasToolResult := false
+	for _, e := range events {
+		if e.Type == AgentEventToolCall && e.ToolName == "read_file" {
+			hasToolCall = true
+		}
+		if e.Type == AgentEventToolResult && e.ToolName == "read_file" {
+			hasToolResult = true
+		}
+	}
+
+	assert.True(t, hasToolCall)
+	assert.True(t, hasToolResult)
+}
+
+func TestLoopReActFallbackSingleQuoteJSON(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []mockResponse{
+			buildTextResponse("Thought: 先读取文件\nAction: read_file\nAction Input: {'path':'test.go',}"),
+			buildTextResponse("读取完成"),
+		},
+	}
+
+	executor := newMockExecutor()
+	executor.results["read_file"] = "ok"
+
+	ch := RunLoop(context.Background(), []llm.Message{{Role: "user", Content: "读取 test.go"}}, DefaultLoopConfig("test-model"), client, executor)
+	for range ch {
+	}
+
+	assert.Len(t, executor.calls, 1)
+	assert.Equal(t, "read_file", executor.calls[0].name)
+	assert.JSONEq(t, `{"path":"test.go"}`, executor.calls[0].args)
+}
+
+func TestLoopReActFallbackFencedJSON(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []mockResponse{
+			buildTextResponse("Thought: 先读取文件\nAction: read_file\nAction Input:\n```json\n{\n  \"path\": \"test.go\"\n}\n```"),
+			buildTextResponse("读取完成"),
+		},
+	}
+
+	executor := newMockExecutor()
+	executor.results["read_file"] = "ok"
+
+	ch := RunLoop(context.Background(), []llm.Message{{Role: "user", Content: "读取 test.go"}}, DefaultLoopConfig("test-model"), client, executor)
+	for range ch {
+	}
+
+	assert.Len(t, executor.calls, 1)
+	assert.Equal(t, "read_file", executor.calls[0].name)
+	assert.JSONEq(t, `{"path":"test.go"}`, executor.calls[0].args)
+}
+
 // TestLoopContextCancellation 测试上下文取消
 func TestLoopContextCancellation(t *testing.T) {
 	// 创建一个 mock，Chat 会阻塞

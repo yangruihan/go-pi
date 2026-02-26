@@ -55,15 +55,18 @@ func main() {
 		return
 	}
 
-	// 加载配置
-	cfg, err := config.Load()
+	cwd, _ := os.Getwd()
+
+	// 加载配置（home + project）
+	cfg, loadSources, err := config.LoadWithSources(cwd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告: 加载配置失败: %v，使用默认配置\n", err)
 	}
-	profiles, perr := config.LoadModelProfiles("")
+	profiles, modelSources, perr := config.LoadModelProfilesWithSources("", cwd)
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "警告: 读取 models.yaml 失败: %v\n", perr)
 	}
+	loadSources.ModelPaths = modelSources
 	modelProfiles = profiles
 
 	// 命令行参数覆盖配置
@@ -172,6 +175,7 @@ func main() {
 			}
 		}
 		for _, tf := range toolFiles {
+			tf = expandUserPath(tf)
 			loadedTools, err := tools.LoadCustomToolsFromYAML(tf)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "警告: 加载扩展工具失败(%s): %v\n", tf, err)
@@ -197,7 +201,6 @@ func main() {
 	}
 	shouldContinue := *cont || *contLong
 
-	cwd, _ := os.Getwd()
 	if selectedSession != "" {
 		loaded, err = manager.LoadByID(cwd, selectedSession)
 		if err != nil {
@@ -238,7 +241,7 @@ func main() {
 	}
 
 	// 交互式模式
-	runInteractive(ctx, sess, cfg, manager, bashTool)
+	runInteractive(ctx, sess, cfg, manager, bashTool, loadSources)
 }
 
 // buildSystemMessage 构建系统提示词
@@ -261,7 +264,7 @@ func getOS() string {
 }
 
 // runInteractive 运行交互式 CLI
-func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager, bashTool *tools.BashTool) {
+func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager, bashTool *tools.BashTool, sources config.LoadSources) {
 	// 设置信号处理
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -293,6 +296,8 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 	if !cfg.TUI.QuietStartup {
 		fmt.Printf("Gopi v%s — 本地 AI 编程助手\n", version)
 		fmt.Printf("模型: %s | provider: %s\n", cfg.Ollama.Model, cfg.LLM.Provider)
+		fmt.Printf("配置路径: %s\n", formatFinalPathOrDefault(sources.ConfigPaths, "(default 内置配置)"))
+		fmt.Printf("模型配置路径: %s\n", formatFinalPathOrDefault(sources.ModelPaths, "(none)"))
 		fmt.Println("输入消息后按 Enter 发送，Ctrl+C 中止生成，Ctrl+D 退出")
 		fmt.Println(strings.Repeat("─", 60))
 	}
@@ -365,8 +370,9 @@ func printPerfReport(r perf.Report) {
 
 // runAgentTurn 执行一次 Agent 对话轮次
 func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
+	renderer := &cliOutputRenderer{}
 	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
-		handleOutputEvent(event)
+		handleOutputEvent(event, renderer)
 	})
 	defer unsubscribe()
 
@@ -376,6 +382,7 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 			fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", err)
 		}
 	}
+	renderer.flush()
 	fmt.Println()
 }
 
@@ -520,17 +527,66 @@ func handleSlashCommand(input string, sess session.Session, cfg config.Config, m
 	}
 }
 
-func handleOutputEvent(event agent.AgentEvent) {
+type cliOutputRenderer struct {
+	lastToolCallSig string
+	lastToolCallCnt int
+
+	lastToolResultSig string
+	lastToolResultCnt int
+}
+
+func (r *cliOutputRenderer) flushToolCallDup() {
+	if r.lastToolCallCnt > 1 {
+		fmt.Printf("[重复工具调用已省略] %s x%d\n", r.lastToolCallSig, r.lastToolCallCnt)
+	}
+	r.lastToolCallCnt = 0
+	r.lastToolCallSig = ""
+}
+
+func (r *cliOutputRenderer) flushToolResultDup() {
+	if r.lastToolResultCnt > 1 {
+		fmt.Printf("[重复工具结果已省略] x%d\n", r.lastToolResultCnt)
+	}
+	r.lastToolResultCnt = 0
+	r.lastToolResultSig = ""
+}
+
+func (r *cliOutputRenderer) flush() {
+	r.flushToolCallDup()
+	r.flushToolResultDup()
+}
+
+func handleOutputEvent(event agent.AgentEvent, renderer *cliOutputRenderer) {
 	switch event.Type {
 	case agent.AgentEventDelta:
+		renderer.flushToolCallDup()
+		renderer.flushToolResultDup()
 		fmt.Print(event.Delta)
 	case agent.AgentEventToolCall:
+		sig := event.ToolName + "|" + strings.TrimSpace(event.ToolArgs)
+		if sig == renderer.lastToolCallSig {
+			renderer.lastToolCallCnt++
+			return
+		}
+		renderer.flushToolCallDup()
+		renderer.lastToolCallSig = sig
+		renderer.lastToolCallCnt = 1
+
 		fmt.Printf("\n[执行工具: %s]\n", event.ToolName)
 		if event.ToolArgs != "" && event.ToolArgs != "{}" {
 			fmt.Printf("  参数: %s\n", truncate(event.ToolArgs, 200))
 		}
 	case agent.AgentEventToolResult:
+		renderer.flushToolCallDup()
 		result := strings.TrimSpace(event.ToolResult)
+		if result == renderer.lastToolResultSig {
+			renderer.lastToolResultCnt++
+			return
+		}
+		renderer.flushToolResultDup()
+		renderer.lastToolResultSig = result
+		renderer.lastToolResultCnt = 1
+
 		if result != "" {
 			lines := strings.Split(result, "\n")
 			if len(lines) > 10 {
@@ -541,6 +597,8 @@ func handleOutputEvent(event agent.AgentEvent) {
 			}
 		}
 		fmt.Println()
+	case agent.AgentEventTurnEnd, agent.AgentEventEnd, agent.AgentEventError:
+		renderer.flush()
 	}
 }
 
@@ -584,4 +642,30 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func expandUserPath(path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return p
+	}
+	if strings.HasPrefix(p, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if p == "~" {
+				return home
+			}
+			if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~\\") {
+				return filepath.Join(home, p[2:])
+			}
+		}
+	}
+	return p
+}
+
+func formatFinalPathOrDefault(paths []string, fallback string) string {
+	if len(paths) == 0 {
+		return fallback
+	}
+	return paths[len(paths)-1]
 }

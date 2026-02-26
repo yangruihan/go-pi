@@ -38,8 +38,18 @@
    - `~/.gopi/models.yaml`
    - `~/.gopi/tools.yaml`
    - `~/.gopi/prompt.md`
-2. 在项目根目录放置 `AGENT.md`（可从模板改写）
-3. 启动 gopi 后验证：
+2. 可选：在项目根目录放置项目级配置（用于覆盖用户级）
+   - `<project>/.gopi/config.yaml` 或 `<project>/config.yaml`
+   - `<project>/.gopi/models.yaml` 或 `<project>/models.yaml`
+3. 在项目根目录放置 `AGENT.md`（可从模板改写）
+4. 启动 gopi 后验证：
    - `/help`
    - `/model <alias>`
    - `/skill:<name>`
+
+## 配置加载优先级
+
+- 主配置：`default` → `~/.gopi/config.yaml` → `<project>/.gopi/config.yaml` → `<project>/config.yaml`
+- 模型别名：`~/.gopi/models.yaml` → `<project>/.gopi/models.yaml` → `<project>/models.yaml`（同名 alias 以后者覆盖前者）
+
+启动时会显示“配置路径 / 模型配置路径”的最终生效文件路径。

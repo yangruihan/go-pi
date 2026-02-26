@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/coderyrh/gopi/internal/llm"
@@ -115,6 +117,18 @@ func RunLoop(
 
 			ch <- AgentEvent{Type: AgentEventTurnEnd}
 
+			// 最小 ReAct fallback：当模型未返回原生 tool call 时，尝试解析 Action/Action Input
+			if len(toolCalls) == 0 && fullMsg != nil {
+				if reactCall, ok := parseReActToolCall(fullMsg.Content, turns); ok {
+					toolCalls = []llm.ToolCall{reactCall}
+					ch <- AgentEvent{
+						Type:     AgentEventToolCall,
+						ToolName: reactCall.Function.Name,
+						ToolArgs: reactCall.Function.Arguments,
+					}
+				}
+			}
+
 			// 无工具调用则结束
 			if len(toolCalls) == 0 {
 				break
@@ -188,4 +202,116 @@ func execToolsConcurrent(ctx context.Context, calls []llm.ToolCall, executor Too
 
 	wg.Wait()
 	return results
+}
+
+func parseReActToolCall(content string, turn int) (llm.ToolCall, bool) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	var action string
+	var actionInput string
+
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		lower := strings.ToLower(line)
+
+		if strings.HasPrefix(lower, "action input:") {
+			v := strings.TrimSpace(line[len("Action Input:"):])
+			if v == "" && i+1 < len(lines) {
+				next := strings.TrimSpace(lines[i+1])
+				if strings.HasPrefix(next, "```") {
+					var block []string
+					for j := i + 2; j < len(lines); j++ {
+						candidate := strings.TrimSpace(lines[j])
+						if strings.HasPrefix(candidate, "```") {
+							break
+						}
+						block = append(block, lines[j])
+					}
+					v = strings.TrimSpace(strings.Join(block, "\n"))
+				} else {
+					v = next
+				}
+			}
+			actionInput = v
+			continue
+		}
+
+		if strings.HasPrefix(lower, "action:") {
+			action = strings.TrimSpace(line[len("Action:"):])
+		}
+	}
+
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return llm.ToolCall{}, false
+	}
+
+	if strings.TrimSpace(actionInput) == "" {
+		actionInput = "{}"
+	}
+	actionInput = normalizeActionInput(actionInput)
+
+	var raw json.RawMessage
+	if err := json.Unmarshal([]byte(actionInput), &raw); err != nil {
+		fallback := repairJSONLike(actionInput)
+		if err2 := json.Unmarshal([]byte(fallback), &raw); err2 != nil {
+			return llm.ToolCall{}, false
+		}
+		actionInput = fallback
+	}
+
+	return llm.ToolCall{
+		ID:   fmt.Sprintf("react-%d", turn),
+		Type: "function",
+		Function: llm.ToolCallFunction{
+			Name:      action,
+			Arguments: actionInput,
+		},
+	}, true
+}
+
+func normalizeActionInput(input string) string {
+	s := strings.TrimSpace(input)
+	if strings.HasPrefix(s, "```") {
+		lines := strings.Split(s, "\n")
+		if len(lines) >= 2 {
+			start := 1
+			end := len(lines)
+			for i := len(lines) - 1; i >= 0; i-- {
+				if strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
+					end = i
+					break
+				}
+			}
+			if end > start {
+				s = strings.Join(lines[start:end], "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+func repairJSONLike(input string) string {
+	s := normalizeActionInput(input)
+	if s == "" {
+		return "{}"
+	}
+
+	// 轻量修复：智能引号、单引号 key/value、尾逗号
+	replacer := strings.NewReplacer(
+		"“", "\"",
+		"”", "\"",
+		"‘", "'",
+		"’", "'",
+	)
+	s = replacer.Replace(s)
+
+	keySingleQuoteRe := regexp.MustCompile(`([{,]\s*)'([^'\n\r]+?)'\s*:`)
+	valueSingleQuoteRe := regexp.MustCompile(`:\s*'([^'\n\r]*?)'(\s*[,}\]])`)
+	trailingCommaRe := regexp.MustCompile(`,(\s*[}\]])`)
+
+	s = keySingleQuoteRe.ReplaceAllString(s, `$1"$2":`)
+	s = valueSingleQuoteRe.ReplaceAllString(s, `: "$1"$2`)
+	s = trailingCommaRe.ReplaceAllString(s, `$1`)
+
+	return strings.TrimSpace(s)
 }
