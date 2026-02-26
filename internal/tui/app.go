@@ -13,6 +13,7 @@ import (
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
 	"github.com/coderyrh/gopi/internal/session"
+	"github.com/coderyrh/gopi/internal/skills"
 	"golang.org/x/term"
 )
 
@@ -285,6 +286,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			raw := strings.TrimSpace(m.input)
+			if strings.HasPrefix(raw, "/skill:") {
+				name := strings.TrimPrefix(raw, "/skill:")
+				cwd, _ := os.Getwd()
+				content, err := skills.LoadProjectSkill(cwd, name)
+				if err != nil {
+					m.lastErr = err.Error()
+				} else if err := m.sess.AppendSystemPrompt("技能[" + name + "]:\n" + content); err != nil {
+					m.lastErr = err.Error()
+				} else {
+					m.statusHint = "已加载技能: " + name
+					m.input = ""
+				}
+				return m, nil
+			}
 			text, images, missing := parseImageMentions(raw)
 			if len(missing) > 0 {
 				m.statusHint = "部分图片不存在: " + strings.Join(missing, ", ")
@@ -439,8 +454,9 @@ func (m AppModel) renderModal() string {
 	items := []string{}
 	if m.modal == modalSession {
 		title = "会话选择器（Enter 切换, Esc 关闭）"
-		for _, s := range m.sessionItems {
-			items = append(items, fmt.Sprintf("%s  (%s)", s.ID, s.UpdatedAt.Format("01-02 15:04")))
+		labels := buildSessionTreeLabels(m.sessionItems)
+		for i, s := range m.sessionItems {
+			items = append(items, fmt.Sprintf("%s  (%s)", labels[i], s.UpdatedAt.Format("01-02 15:04")))
 		}
 	}
 	if m.modal == modalModel {
@@ -462,8 +478,47 @@ func (m AppModel) renderModal() string {
 	return m.theme.Border.Width(min(80, m.width-4)).Render(body)
 }
 
+func buildSessionTreeLabels(items []session.SessionMeta) []string {
+	depth := map[string]int{}
+	index := map[string]session.SessionMeta{}
+	for _, it := range items {
+		index[it.ID] = it
+	}
+	var calcDepth func(id string) int
+	calcDepth = func(id string) int {
+		if d, ok := depth[id]; ok {
+			return d
+		}
+		it, ok := index[id]
+		if !ok || strings.TrimSpace(it.ParentID) == "" {
+			depth[id] = 0
+			return 0
+		}
+		d := calcDepth(it.ParentID) + 1
+		depth[id] = d
+		return d
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		d := calcDepth(it.ID)
+		prefix := strings.Repeat("  ", d)
+		if d > 0 {
+			prefix += "└─ "
+		}
+		out = append(out, prefix+it.ID)
+	}
+	return out
+}
+
 func buildModelItems(cfg config.Config, current string) []string {
 	base := []string{"qwen2.5-coder:7b", "qwen3:8b", cfg.Ollama.Model, current}
+	if profiles, err := config.LoadModelProfiles(""); err == nil {
+		for _, p := range profiles {
+			if strings.TrimSpace(p.Model) != "" {
+				base = append(base, p.Model)
+			}
+		}
+	}
 	set := map[string]bool{}
 	out := make([]string, 0, len(base))
 	for _, m := range base {

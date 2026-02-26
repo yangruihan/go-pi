@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,14 +15,18 @@ import (
 
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
+	"github.com/coderyrh/gopi/internal/extensions"
 	"github.com/coderyrh/gopi/internal/llm"
 	"github.com/coderyrh/gopi/internal/perf"
 	"github.com/coderyrh/gopi/internal/session"
+	"github.com/coderyrh/gopi/internal/skills"
 	"github.com/coderyrh/gopi/internal/tools"
 	gotui "github.com/coderyrh/gopi/internal/tui"
 )
 
 const version = "0.1.0"
+
+var modelProfiles []config.ModelProfile
 
 func main() {
 	// 解析命令行参数
@@ -29,6 +34,9 @@ func main() {
 		model     = flag.String("m", "", "指定模型（默认使用配置文件中的模型）")
 		modelLong = flag.String("model", "", "指定模型（默认使用配置文件中的模型）")
 		host      = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
+		provider  = flag.String("provider", "", "LLM 后端：ollama|openai")
+		apiBase   = flag.String("api-base", "", "OpenAI 兼容后端 base url（如 https://api.deepseek.com）")
+		apiKey    = flag.String("api-key", "", "OpenAI 兼容后端 API Key")
 		noTools   = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
 		cont      = flag.Bool("c", false, "继续最近一次会话")
 		contLong  = flag.Bool("continue", false, "继续最近一次会话")
@@ -51,6 +59,11 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告: 加载配置失败: %v，使用默认配置\n", err)
 	}
+	profiles, perr := config.LoadModelProfiles("")
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "警告: 读取 models.yaml 失败: %v\n", perr)
+	}
+	modelProfiles = profiles
 
 	// 命令行参数覆盖配置
 	selectedModel := *model
@@ -60,28 +73,77 @@ func main() {
 	if selectedModel != "" {
 		cfg.Ollama.Model = selectedModel
 	}
+	if p, ok := config.ResolveModelProfile(selectedModel, profiles); ok {
+		cfg.Ollama.Model = p.Model
+		if p.Provider != "" {
+			cfg.LLM.Provider = p.Provider
+		}
+		if p.BaseURL != "" {
+			cfg.LLM.BaseURL = p.BaseURL
+		}
+		if k, err := p.ResolveAPIKey(); err == nil && strings.TrimSpace(k) != "" {
+			cfg.LLM.APIKey = k
+		}
+	}
 	if *host != "" {
 		cfg.Ollama.Host = *host
 	}
-
-	// 创建 LLM 客户端
-	client, err := llm.NewClient(cfg.Ollama.Host)
-	if err != nil {
-		fatal("创建 LLM 客户端失败: %v", err)
+	if *provider != "" {
+		cfg.LLM.Provider = strings.ToLower(strings.TrimSpace(*provider))
+	}
+	if *apiBase != "" {
+		cfg.LLM.BaseURL = *apiBase
+	}
+	if *apiKey != "" {
+		cfg.LLM.APIKey = *apiKey
+	}
+	if strings.TrimSpace(cfg.LLM.Provider) == "" {
+		cfg.LLM.Provider = "ollama"
 	}
 
-	// 检测 Ollama 连接（带重试）
+	// 创建 LLM 客户端
+	var (
+		chatClient agent.LLMClient
+		pingErr    error
+		ollamaClient *llm.Client
+	)
 	ctx := context.Background()
-	if err := client.PingWithRetry(ctx, 3); err != nil {
-		if !*perfMode {
-			fatal("无法连接到 Ollama (%s): %v\n提示: 请确认 Ollama 已启动，或使用 --host 指定正确的地址", cfg.Ollama.Host, err)
+
+	switch cfg.LLM.Provider {
+	case "openai":
+		base := strings.TrimSpace(cfg.LLM.BaseURL)
+		if base == "" {
+			base = strings.TrimSpace(cfg.Ollama.Host)
 		}
-		fmt.Fprintf(os.Stderr, "警告: Ollama 不可用，--perf 将跳过首 token 测量: %v\n", err)
-		client = nil
+		if key := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); key != "" && strings.TrimSpace(cfg.LLM.APIKey) == "" {
+			cfg.LLM.APIKey = key
+		}
+		oai, e := llm.NewOpenAIClient(base, cfg.LLM.APIKey)
+		if e != nil {
+			fatal("创建 OpenAI 兼容客户端失败: %v", e)
+		}
+		chatClient = oai
+		pingErr = oai.PingWithRetry(ctx, 3)
+	default:
+		client, e := llm.NewClient(cfg.Ollama.Host)
+		if e != nil {
+			fatal("创建 Ollama 客户端失败: %v", e)
+		}
+		chatClient = client
+		ollamaClient = client
+		pingErr = client.PingWithRetry(ctx, 3)
+	}
+
+	if pingErr != nil {
+		if !*perfMode {
+			fatal("无法连接到 LLM 后端(provider=%s): %v", cfg.LLM.Provider, pingErr)
+		}
+		fmt.Fprintf(os.Stderr, "警告: LLM 后端不可用，--perf 将跳过首 token 测量: %v\n", pingErr)
+		ollamaClient = nil
 	}
 
 	if *perfMode {
-		report := perf.Run(ctx, client, cfg)
+		report := perf.Run(ctx, ollamaClient, cfg)
 		printPerfReport(report)
 		return
 	}
@@ -98,6 +160,26 @@ func main() {
 		registry.Register(tools.NewGrepTool())
 		registry.Register(tools.NewFindTool())
 		registry.Register(tools.NewLSTool())
+
+		toolFiles := append([]string{}, cfg.Ext.ToolFiles...)
+		if len(toolFiles) == 0 {
+			if dir, err := config.ConfigDir(); err == nil {
+				defaultToolFile := filepath.Join(dir, "tools.yaml")
+				if _, statErr := os.Stat(defaultToolFile); statErr == nil {
+					toolFiles = append(toolFiles, defaultToolFile)
+				}
+			}
+		}
+		for _, tf := range toolFiles {
+			loadedTools, err := tools.LoadCustomToolsFromYAML(tf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "警告: 加载扩展工具失败(%s): %v\n", tf, err)
+				continue
+			}
+			for _, tool := range loadedTools {
+				registry.Register(tool)
+			}
+		}
 	}
 
 	// 初始化会话管理
@@ -127,7 +209,7 @@ func main() {
 		}
 	}
 
-	sess, err := session.NewAgentSession(cfg, client, registry, manager, loaded, buildSystemMessage())
+	sess, err := session.NewAgentSession(cfg, chatClient, registry, manager, loaded, buildSystemMessage())
 	if err != nil {
 		fatal("创建会话失败: %v", err)
 	}
@@ -153,7 +235,7 @@ func main() {
 // buildSystemMessage 构建系统提示词
 func buildSystemMessage() string {
 	cwd, _ := os.Getwd()
-	return fmt.Sprintf(`你是 Gopi，一个运行在本地的 AI 编程助手。
+	base := fmt.Sprintf(`你是 Gopi，一个运行在本地的 AI 编程助手。
 
 当前工作目录: %s
 操作系统: %s
@@ -168,6 +250,11 @@ func buildSystemMessage() string {
 2. 执行危险操作前先确认
 3. 回答简洁、准确，代码有注释
 4. 中文回答（除非用户要求英文）`, cwd, getOS())
+
+	if skill := strings.TrimSpace(skills.LoadGOPIMarkdown(cwd)); skill != "" {
+		base += "\n\n项目技能文件(GOPI.md)：\n" + skill
+	}
+	return base
 }
 
 func getOS() string {
@@ -213,7 +300,7 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 	// 欢迎信息
 	if !cfg.TUI.QuietStartup {
 		fmt.Printf("Gopi v%s — 本地 AI 编程助手\n", version)
-		fmt.Printf("模型: %s | Ollama: %s\n", cfg.Ollama.Model, cfg.Ollama.Host)
+		fmt.Printf("模型: %s | provider: %s\n", cfg.Ollama.Model, cfg.LLM.Provider)
 		fmt.Println("输入消息后按 Enter 发送，Ctrl+C 中止生成，Ctrl+D 退出")
 		fmt.Println(strings.Repeat("─", 60))
 	}
@@ -302,24 +389,66 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 
 // handleSlashCommand 处理 slash 命令，返回是否已处理
 func handleSlashCommand(input string, sess session.Session, cfg config.Config, manager *session.SessionManager) bool {
+	_ = cfg
 	if !strings.HasPrefix(input, "/") {
 		return false
 	}
 
 	parts := strings.Fields(input)
 	cmd := parts[0]
+	if strings.HasPrefix(cmd, "/skill:") {
+		name := strings.TrimPrefix(cmd, "/skill:")
+		cwd, _ := os.Getwd()
+		content, err := skills.LoadProjectSkill(cwd, name)
+		if err != nil {
+			fmt.Printf("加载技能失败: %v\n", err)
+			return true
+		}
+		if err := sess.AppendSystemPrompt("技能[" + name + "]:\n" + content); err != nil {
+			fmt.Printf("应用技能失败: %v\n", err)
+		} else {
+			fmt.Printf("已加载技能: %s\n", name)
+		}
+		return true
+	}
 
 	switch cmd {
 	case "/help":
 		fmt.Println(`可用命令:
   /help          显示帮助
   /session       查看当前会话与历史
+  /session entries 查看当前会话最近条目
   /model <name>  切换模型
+  /checkout <entry-id> 从历史条目创建分支会话
+  /skill:<name>  加载技能文件（.gopi/skills/<name>.md）
   /clear         清空对话历史
   /exit, /quit   退出`)
+		extra := extensions.ListSlashCommands()
+		if len(extra) > 0 {
+			fmt.Println("扩展命令:")
+			for _, c := range extra {
+				fmt.Printf("  /%s  %s\n", c.Name, c.Description)
+			}
+		}
 		return true
 
 	case "/session":
+		if len(parts) >= 2 && parts[1] == "entries" {
+			entries, err := sess.ListEntries(20)
+			if err != nil {
+				fmt.Printf("读取会话条目失败: %v\n", err)
+				return true
+			}
+			if len(entries) == 0 {
+				fmt.Println("当前会话暂无可 checkout 条目")
+				return true
+			}
+			fmt.Println("最近条目（可用于 /checkout <entry-id>）:")
+			for _, e := range entries {
+				fmt.Printf("  - %s [%s] %s\n", e.ID, e.Role, e.Preview)
+			}
+			return true
+		}
 		cwd, _ := os.Getwd()
 		list, err := manager.List(cwd)
 		if err != nil {
@@ -337,7 +466,11 @@ func handleSlashCommand(input string, sess session.Session, cfg config.Config, m
 			max = len(list)
 		}
 		for i := 0; i < max; i++ {
-			fmt.Printf("  - %s (%s)\n", list[i].ID, list[i].UpdatedAt.Format("2006-01-02 15:04:05"))
+			prefix := ""
+			if list[i].ParentID != "" {
+				prefix = "└─ "
+			}
+			fmt.Printf("  - %s%s (%s)\n", prefix, list[i].ID, list[i].UpdatedAt.Format("2006-01-02 15:04:05"))
 		}
 		return true
 
@@ -346,11 +479,27 @@ func handleSlashCommand(input string, sess session.Session, cfg config.Config, m
 			fmt.Printf("当前模型: %s\n", sess.Model())
 		} else {
 			newModel := parts[1]
+			if p, ok := config.ResolveModelProfile(newModel, modelProfiles); ok {
+				newModel = p.Model
+			}
 			if err := sess.SetModel(newModel); err != nil {
 				fmt.Printf("切换模型失败: %v\n", err)
 			} else {
 				fmt.Printf("已切换到模型: %s\n", newModel)
 			}
+		}
+		return true
+
+	case "/checkout":
+		if len(parts) < 2 {
+			fmt.Println("用法: /checkout <entry-id>")
+			return true
+		}
+		newID, err := sess.Checkout(parts[1])
+		if err != nil {
+			fmt.Printf("checkout 失败: %v\n", err)
+		} else {
+			fmt.Printf("已创建并切换到分支会话: %s\n", newID)
 		}
 		return true
 
@@ -365,6 +514,15 @@ func handleSlashCommand(input string, sess session.Session, cfg config.Config, m
 		return true
 
 	default:
+		name := strings.TrimPrefix(cmd, "/")
+		if out, ok, err := extensions.ExecuteSlashCommand(name, parts[1:]); ok {
+			if err != nil {
+				fmt.Printf("扩展命令执行失败: %v\n", err)
+			} else if strings.TrimSpace(out) != "" {
+				fmt.Println(out)
+			}
+			return true
+		}
 		fmt.Printf("未知命令: %s（输入 /help 查看帮助）\n", cmd)
 		return true
 	}

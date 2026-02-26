@@ -28,11 +28,14 @@ type headerEntry struct {
 	Type      entryType `json:"type"`
 	ID        string    `json:"id"`
 	CWD       string    `json:"cwd"`
+	ParentID  string    `json:"parent_id,omitempty"`
+	ParentEntryID string `json:"parent_entry_id,omitempty"`
 	Timestamp string    `json:"timestamp"`
 }
 
 type messageEntry struct {
 	Type       entryType       `json:"type"`
+	ID         string          `json:"id,omitempty"`
 	Role       string          `json:"role"`
 	Content    string          `json:"content,omitempty"`
 	Images     []string        `json:"images,omitempty"`
@@ -60,7 +63,17 @@ type SessionMeta struct {
 	ID        string
 	FilePath  string
 	CWD       string
+	ParentID  string
+	ParentEntryID string
 	UpdatedAt time.Time
+}
+
+// SessionEntryMeta 会话消息条目元信息
+type SessionEntryMeta struct {
+	ID        string
+	Role      string
+	Preview   string
+	Timestamp string
 }
 
 // LoadedSession 从持久化加载出的会话
@@ -68,6 +81,8 @@ type LoadedSession struct {
 	ID       string
 	FilePath string
 	CWD      string
+	ParentID string
+	ParentEntryID string
 	Model    string
 	Messages []llm.Message
 }
@@ -100,18 +115,26 @@ func newSessionID() string {
 	return time.Now().UTC().Format("20060102T150405.000000000Z")
 }
 
+func newEntryID() string {
+	return "e-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+}
+
 func (m *SessionManager) sessionDir(cwd string) string {
 	return filepath.Join(m.rootDir, hashCWD(cwd))
 }
 
 func (m *SessionManager) Create(cwd, model string) (*LoadedSession, error) {
+	return m.createWithParent(cwd, model, "", "")
+}
+
+func (m *SessionManager) createWithParent(cwd, model, parentID, parentEntryID string) (*LoadedSession, error) {
 	if err := os.MkdirAll(m.sessionDir(cwd), 0o755); err != nil {
 		return nil, err
 	}
 	id := newSessionID()
 	filePath := filepath.Join(m.sessionDir(cwd), id+".jsonl")
 
-	header := headerEntry{Type: entryHeader, ID: id, CWD: cwd, Timestamp: time.Now().UTC().Format(time.RFC3339)}
+	header := headerEntry{Type: entryHeader, ID: id, CWD: cwd, ParentID: parentID, ParentEntryID: parentEntryID, Timestamp: time.Now().UTC().Format(time.RFC3339)}
 	if err := appendJSONL(filePath, header); err != nil {
 		return nil, err
 	}
@@ -119,7 +142,7 @@ func (m *SessionManager) Create(cwd, model string) (*LoadedSession, error) {
 		_ = appendJSONL(filePath, modelChangeEntry{Type: entryModelChange, Model: model, Timestamp: time.Now().UTC().Format(time.RFC3339)})
 	}
 
-	return &LoadedSession{ID: id, FilePath: filePath, CWD: cwd, Model: model}, nil
+	return &LoadedSession{ID: id, FilePath: filePath, CWD: cwd, ParentID: parentID, ParentEntryID: parentEntryID, Model: model}, nil
 }
 
 func (m *SessionManager) List(cwd string) ([]SessionMeta, error) {
@@ -141,7 +164,8 @@ func (m *SessionManager) List(cwd string) ([]SessionMeta, error) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".jsonl")
-		metas = append(metas, SessionMeta{ID: id, FilePath: filepath.Join(dir, e.Name()), CWD: cwd, UpdatedAt: info.ModTime()})
+		h := readSessionHeader(filepath.Join(dir, e.Name()))
+		metas = append(metas, SessionMeta{ID: id, FilePath: filepath.Join(dir, e.Name()), CWD: cwd, ParentID: h.ParentID, ParentEntryID: h.ParentEntryID, UpdatedAt: info.ModTime()})
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt.After(metas[j].UpdatedAt) })
 	return metas, nil
@@ -188,6 +212,8 @@ func (m *SessionManager) Load(filePath string) (*LoadedSession, error) {
 			if json.Unmarshal(line, &v) == nil {
 				out.ID = v.ID
 				out.CWD = v.CWD
+				out.ParentID = v.ParentID
+				out.ParentEntryID = v.ParentEntryID
 			}
 		case entryModelChange:
 			var v modelChangeEntry
@@ -197,7 +223,7 @@ func (m *SessionManager) Load(filePath string) (*LoadedSession, error) {
 		case entryMessage:
 			var v messageEntry
 			if json.Unmarshal(line, &v) == nil {
-				out.Messages = append(out.Messages, llm.Message{Role: v.Role, Content: v.Content, Images: v.Images, ToolCalls: v.ToolCalls, ToolCallID: v.ToolCallID})
+				out.Messages = append(out.Messages, llm.Message{EntryID: v.ID, Role: v.Role, Content: v.Content, Images: v.Images, ToolCalls: v.ToolCalls, ToolCallID: v.ToolCallID})
 			}
 		}
 	}
@@ -208,6 +234,119 @@ func (m *SessionManager) Load(filePath string) (*LoadedSession, error) {
 		out.ID = strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
 	}
 	return out, nil
+}
+
+func (m *SessionManager) ListEntries(sessionFile string, limit int) ([]SessionEntryMeta, error) {
+	f, err := os.Open(sessionFile)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := make([]SessionEntryMeta, 0)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var env struct { Type entryType `json:"type"` }
+		if json.Unmarshal(line, &env) != nil || env.Type != entryMessage {
+			continue
+		}
+		var msg messageEntry
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if strings.TrimSpace(msg.ID) == "" {
+			continue
+		}
+		preview := strings.TrimSpace(msg.Content)
+		if len([]rune(preview)) > 40 {
+			r := []rune(preview)
+			preview = string(r[:40]) + "..."
+		}
+		out = append(out, SessionEntryMeta{ID: msg.ID, Role: msg.Role, Preview: preview, Timestamp: msg.Timestamp})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func (m *SessionManager) CheckoutFromEntry(cwd, currentSessionID, currentFile, entryID, model string) (*LoadedSession, error) {
+	if strings.TrimSpace(entryID) == "" {
+		return nil, fmt.Errorf("entry id cannot be empty")
+	}
+	messages, err := loadMessagesUntilEntry(currentFile, entryID)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("entry id %s not found", entryID)
+	}
+	created, err := m.createWithParent(cwd, model, currentSessionID, entryID)
+	if err != nil {
+		return nil, err
+	}
+	for _, msg := range messages {
+		if err := appendJSONL(created.FilePath, msg); err != nil {
+			return nil, err
+		}
+	}
+	return m.Load(created.FilePath)
+}
+
+func loadMessagesUntilEntry(filePath, entryID string) ([]messageEntry, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := make([]messageEntry, 0)
+	found := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var env struct { Type entryType `json:"type"` }
+		if json.Unmarshal(line, &env) != nil || env.Type != entryMessage {
+			continue
+		}
+		var msg messageEntry
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		out = append(out, msg)
+		if msg.ID == entryID {
+			found = true
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("entry id %s not found", entryID)
+	}
+	return out, nil
+}
+
+func readSessionHeader(filePath string) headerEntry {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return headerEntry{}
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var h headerEntry
+		if json.Unmarshal(line, &h) == nil && h.Type == entryHeader {
+			return h
+		}
+	}
+	return headerEntry{}
 }
 
 func appendJSONL(filePath string, v any) error {

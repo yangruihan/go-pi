@@ -11,9 +11,18 @@ import (
 // Config 全局配置
 type Config struct {
 	Ollama  OllamaConfig  `yaml:"ollama"`
+	LLM     LLMConfig     `yaml:"llm"`
 	Context ContextConfig `yaml:"context"`
 	Tools   ToolsConfig   `yaml:"tools"`
 	TUI     TUIConfig     `yaml:"tui"`
+	Ext     ExtensionsConfig `yaml:"extensions"`
+}
+
+// LLMConfig 通用 LLM 配置（支持 OpenAI 兼容后端）
+type LLMConfig struct {
+	Provider string `yaml:"provider"` // ollama | openai
+	BaseURL  string `yaml:"base_url"`
+	APIKey   string `yaml:"api_key"`
 }
 
 // OllamaConfig Ollama 连接配置
@@ -46,6 +55,13 @@ type TUIConfig struct {
 	QuietStartup   bool   `yaml:"quiet_startup"`
 }
 
+// ExtensionsConfig 扩展配置
+type ExtensionsConfig struct {
+	ToolFiles   []string `yaml:"tool_files"`
+	BeforePrompt string  `yaml:"before_prompt"`
+	AfterResponse string `yaml:"after_response"`
+}
+
 // Default 返回默认配置
 func Default() Config {
 	return Config{
@@ -54,6 +70,11 @@ func Default() Config {
 			Model:       "qwen2.5-coder:7b",
 			Timeout:     120 * time.Second,
 			ToolCalling: "auto",
+		},
+		LLM: LLMConfig{
+			Provider: "ollama",
+			BaseURL:  "",
+			APIKey:   "",
 		},
 		Context: ContextConfig{
 			MaxTokens:           32768,
@@ -70,6 +91,11 @@ func Default() Config {
 			Theme:          "dark",
 			ShowTokenCount: true,
 			QuietStartup:   false,
+		},
+		Ext: ExtensionsConfig{
+			ToolFiles:    nil,
+			BeforePrompt: "",
+			AfterResponse: "",
 		},
 	}
 }

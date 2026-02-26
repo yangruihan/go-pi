@@ -16,6 +16,7 @@ const (
 
 // Message 表示一条对话消息
 type Message struct {
+	EntryID    string     `json:"entry_id,omitempty"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
 	Images     []string   `json:"images,omitempty"`

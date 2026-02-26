@@ -10,6 +10,7 @@ import (
 
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
+	"github.com/coderyrh/gopi/internal/extensions"
 	"github.com/coderyrh/gopi/internal/llm"
 	"github.com/coderyrh/gopi/internal/tools"
 )
@@ -25,6 +26,7 @@ type Session interface {
 
 	Model() string
 	SetModel(model string) error
+	AppendSystemPrompt(text string) error
 	IsStreaming() bool
 	Messages() []llm.Message
 
@@ -32,7 +34,9 @@ type Session interface {
 	SessionFile() string
 	SessionID() string
 	ListSessions() ([]SessionMeta, error)
+	ListEntries(limit int) ([]SessionEntryMeta, error)
 	SwitchSession(id string) error
+	Checkout(entryID string) (string, error)
 }
 
 type PromptOpt func(*promptOptions)
@@ -67,6 +71,8 @@ type AgentSession struct {
 	streaming bool
 	cancelFn  context.CancelFunc
 	pendingJSONLLines [][]byte
+	beforePromptHook string
+	afterResponseHook string
 }
 
 func NewAgentSession(
@@ -88,6 +94,8 @@ func NewAgentSession(
 		manager:   manager,
 		bus:       NewEventBus(),
 		estimator: NewTokenEstimator(),
+		beforePromptHook: strings.TrimSpace(cfg.Ext.BeforePrompt),
+		afterResponseHook: strings.TrimSpace(cfg.Ext.AfterResponse),
 	}
 
 	if loaded == nil {
@@ -113,6 +121,13 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("prompt cannot be empty")
 	}
+	if strings.TrimSpace(s.beforePromptHook) != "" {
+		if out, err := extensions.RunHook(s.beforePromptHook, text, 10*time.Second); err != nil {
+			s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: err})
+		} else if strings.TrimSpace(out) != "" {
+			text = out
+		}
+	}
 
 	po := &promptOptions{}
 	for _, opt := range opts {
@@ -132,12 +147,12 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 
 	working := make([]llm.Message, len(s.messages), len(s.messages)+4)
 	copy(working, s.messages)
-	userMsg := llm.Message{Role: "user", Content: text, Images: po.images}
+	userMsg := llm.Message{EntryID: newEntryID(), Role: "user", Content: text, Images: po.images}
 	working = append(working, userMsg)
 	model := s.model
 	s.mu.Unlock()
 
-	if err := s.persistEntry(messageEntry{Type: entryMessage, Role: userMsg.Role, Content: userMsg.Content, Images: userMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := s.persistEntry(messageEntry{Type: entryMessage, ID: userMsg.EntryID, Role: userMsg.Role, Content: userMsg.Content, Images: userMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
 	}
 
@@ -157,6 +172,7 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 	eventCh := agent.RunLoop(ctx, working, loopCfg, s.client, s.registry)
 	var turnBuilder strings.Builder
 	var finalErr error
+	var lastAssistant string
 
 	for ev := range eventCh {
 		s.bus.Publish(ev)
@@ -164,19 +180,20 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 		case agent.AgentEventDelta:
 			turnBuilder.WriteString(ev.Delta)
 		case agent.AgentEventToolResult:
-			toolMsg := llm.Message{Role: "tool", Content: ev.ToolResult}
+			toolMsg := llm.Message{EntryID: newEntryID(), Role: "tool", Content: ev.ToolResult}
 			working = append(working, toolMsg)
-			if err := s.persistEntry(messageEntry{Type: entryMessage, Role: toolMsg.Role, Content: toolMsg.Content, Images: toolMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+			if err := s.persistEntry(messageEntry{Type: entryMessage, ID: toolMsg.EntryID, Role: toolMsg.Role, Content: toolMsg.Content, Images: toolMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 				s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
 			}
 		case agent.AgentEventTurnEnd:
 			assistantText := strings.TrimSpace(turnBuilder.String())
 			if assistantText != "" {
-				assistant := llm.Message{Role: "assistant", Content: assistantText}
+				assistant := llm.Message{EntryID: newEntryID(), Role: "assistant", Content: assistantText}
 				working = append(working, assistant)
-				if err := s.persistEntry(messageEntry{Type: entryMessage, Role: assistant.Role, Content: assistant.Content, Images: assistant.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+				if err := s.persistEntry(messageEntry{Type: entryMessage, ID: assistant.EntryID, Role: assistant.Role, Content: assistant.Content, Images: assistant.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 					s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
 				}
+				lastAssistant = assistantText
 			}
 			turnBuilder.Reset()
 		case agent.AgentEventError:
@@ -191,6 +208,11 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 	s.mu.Unlock()
 
 	_ = s.tryCompact()
+	if strings.TrimSpace(s.afterResponseHook) != "" && strings.TrimSpace(lastAssistant) != "" {
+		if _, err := extensions.RunHook(s.afterResponseHook, lastAssistant, 10*time.Second); err != nil {
+			s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: err})
+		}
+	}
 	s.finishStreaming()
 	return llm.EnhanceModelError(finalErr, model)
 }
@@ -242,6 +264,20 @@ func (s *AgentSession) SetModel(model string) error {
 	return appendJSONL(file, modelChangeEntry{Type: entryModelChange, Model: model, Timestamp: time.Now().UTC().Format(time.RFC3339)})
 }
 
+func (s *AgentSession) AppendSystemPrompt(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("system prompt addon cannot be empty")
+	}
+	s.mu.Lock()
+	if s.systemMsg != "" {
+		s.systemMsg += "\n\n"
+	}
+	s.systemMsg += text
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *AgentSession) IsStreaming() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -288,6 +324,13 @@ func (s *AgentSession) ListSessions() ([]SessionMeta, error) {
 	return s.manager.List(s.cwd)
 }
 
+func (s *AgentSession) ListEntries(limit int) ([]SessionEntryMeta, error) {
+	s.mu.Lock()
+	file := s.sessionFile
+	s.mu.Unlock()
+	return s.manager.ListEntries(file, limit)
+}
+
 func (s *AgentSession) SwitchSession(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("session id cannot be empty")
@@ -308,6 +351,38 @@ func (s *AgentSession) SwitchSession(id string) error {
 		s.model = loaded.Model
 	}
 	return nil
+}
+
+func (s *AgentSession) Checkout(entryID string) (string, error) {
+	entryID = strings.TrimSpace(entryID)
+	if entryID == "" {
+		return "", fmt.Errorf("entry id cannot be empty")
+	}
+
+	s.mu.Lock()
+	if s.streaming {
+		s.mu.Unlock()
+		return "", fmt.Errorf("cannot checkout while streaming")
+	}
+	currentID := s.sessionID
+	currentFile := s.sessionFile
+	model := s.model
+	s.mu.Unlock()
+
+	loaded, err := s.manager.CheckoutFromEntry(s.cwd, currentID, currentFile, entryID, model)
+	if err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	s.sessionID = loaded.ID
+	s.sessionFile = loaded.FilePath
+	s.messages = append([]llm.Message{}, loaded.Messages...)
+	if strings.TrimSpace(loaded.Model) != "" {
+		s.model = loaded.Model
+	}
+	s.mu.Unlock()
+	return loaded.ID, nil
 }
 
 func (s *AgentSession) finishStreaming() {
