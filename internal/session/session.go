@@ -20,6 +20,7 @@ type Session interface {
 	Steer(text string) error
 	FollowUp(text string) error
 	Abort()
+	ClearMessages()
 	Subscribe(fn EventListener) func()
 
 	Model() string
@@ -185,6 +186,14 @@ func (s *AgentSession) Abort() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+func (s *AgentSession) ClearMessages() {
+	s.mu.Lock()
+	s.messages = nil
+	file := s.sessionFile
+	s.mu.Unlock()
+	_ = appendJSONL(file, messageEntry{Type: entryMessage, Role: "system", Content: "[会话已清空]", Timestamp: time.Now().UTC().Format(time.RFC3339)})
 }
 
 func (s *AgentSession) Subscribe(fn EventListener) func() { return s.bus.Subscribe(fn) }

@@ -282,7 +282,8 @@ func handleSlashCommand(input string, sess session.Session, cfg config.Config, m
 		return true
 
 	case "/clear":
-		fmt.Println("当前版本未提供 /clear 的会话内原地清空，建议新开会话。")
+		sess.ClearMessages()
+		fmt.Println("对话历史已清空")
 		return true
 
 	case "/exit", "/quit":
