@@ -119,6 +119,8 @@ go build -o build/gopi.exe ./cmd/gopi/
 # 运行
 ./build/gopi.exe                     # 交互模式（需 Ollama 启动）
 ./build/gopi.exe --model qwen3:8b    # 指定模型
+./build/gopi.exe --continue          # 继续最近会话
+./build/gopi.exe --session <id>      # 打开指定会话
 ./build/gopi.exe --no-tools          # 纯对话模式
 echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 ```
@@ -127,18 +129,18 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 
 ---
 
-## Phase 2 — 完整工具链 + 会话持久化
+## Phase 2 — 完整工具链 + 会话持久化 ✅ 已完成（初版）
 
 **目标**：完整的文件操作工具 + 会话可以保存/恢复。
 
 ### 2.1 完整工具实现 (`internal/tools/`)
 
 **任务清单：**
-- [ ] `write.go`：写文件（覆盖或追加）
-- [ ] `edit.go`：精确字符串替换（`old_string` → `new_string`，需匹配上下文）
-- [ ] `grep.go`：正则/字面量搜索（`-r` 递归，输出文件名+行号+内容）
-- [ ] `find.go`：Glob 文件查找（过滤 .gitignore）
-- [ ] `ls.go`：目录列表（树状或平铺）
+- [x] `write.go`：写文件（覆盖或追加）
+- [x] `edit.go`：精确字符串替换（`old_string` → `new_string`，需匹配上下文）
+- [x] `grep.go`：正则/字面量搜索（`-r` 递归，输出文件名+行号+内容）
+- [x] `find.go`：Glob 文件查找（过滤 .gitignore）
+- [x] `ls.go`：目录列表（树状或平铺）
 
 **edit 工具的精确替换算法（重要）：**
 ```
@@ -153,32 +155,32 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 ### 2.2 会话持久化 (`internal/session/persistence.go`)
 
 **任务清单：**
-- [ ] JSONL 会话文件写入（Append-only）
-- [ ] 从文件加载历史会话
-- [ ] 会话文件路径管理（按 cwd hash 分目录）
-- [ ] `SessionManager.List(cwd)` — 列出当前项目的会话
-- [ ] `SessionManager.Continue(cwd)` — 继续最近一次会话
+- [x] JSONL 会话文件写入（Append-only）
+- [x] 从文件加载历史会话
+- [x] 会话文件路径管理（按 cwd hash 分目录）
+- [x] `SessionManager.List(cwd)` — 列出当前项目的会话
+- [x] `SessionManager.Continue(cwd)` — 继续最近一次会话
 
 ---
 
 ### 2.3 AgentSession 业务层 (`internal/session/session.go`)
 
 **任务清单：**
-- [ ] `Session` 接口完整实现
-- [ ] 事件总线：`Subscribe(fn)` → 返回取消函数
-- [ ] `Prompt()` 串联：扩展输入处理 → 构建消息 → 调用 Agent → 持久化
-- [ ] Slash 命令基础框架：`/help`, `/session`, `/model`, `/clear`
+- [x] `Session` 接口完整实现
+- [x] 事件总线：`Subscribe(fn)` → 返回取消函数
+- [x] `Prompt()` 串联：扩展输入处理 → 构建消息 → 调用 Agent → 持久化
+- [x] Slash 命令基础框架：`/help`, `/session`, `/model`, `/clear`
 
 ---
 
 ### 2.4 上下文压缩 (`internal/session/compaction.go`)
 
 **任务清单：**
-- [ ] Token 估算（tiktoken-go，cl100k_base 编码）
-- [ ] 压缩触发检测（每次 agent_end 后检查）
-- [ ] 压缩流程：提取热消息 → 调用 LLM 摘要 → 替换历史 → 持久化
-- [ ] 摘要 Prompt 设计（专门针对编程任务优化）
-- [ ] 单元测试：验证压缩后消息数量、Token 数减少正确
+- [x] Token 估算（tiktoken-go，cl100k_base 编码）
+- [x] 压缩触发检测（每次 agent_end 后检查）
+- [x] 压缩流程：提取热消息 → 调用 LLM 摘要 → 替换历史 → 持久化
+- [x] 摘要 Prompt 设计（专门针对编程任务优化）
+- [x] 单元测试：验证压缩后消息数量、Token 数减少正确
 
 **摘要 Prompt 模板（针对编码任务）：**
 ```
@@ -200,13 +202,13 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 ### 2.5 CLI 增强
 
 **任务清单：**
-- [ ] `-m / --model` 指定模型
-- [ ] `-c / --continue` 继续上次会话
-- [ ] `-s / --session <id>` 打开指定会话
-- [ ] `--print` 非交互模式（接受 stdin 输入，输出到 stdout，适合管道）
-- [ ] `--no-tools` 纯对话模式
+- [x] `-m / --model` 指定模型
+- [x] `-c / --continue` 继续上次会话
+- [x] `-s / --session <id>` 打开指定会话
+- [x] `--print` 非交互模式（接受 stdin 输入，输出到 stdout，适合管道）
+- [x] `--no-tools` 纯对话模式
 
-**Phase 2 完成标志：** 能完整地读取、编写、编辑代码文件，会话能跨次重启恢复，基本的 Slash 命令可用。
+**Phase 2 完成标志：** ✅ 已达成（初版）：已支持完整文件工具链、会话 JSONL 持久化与恢复、`/session` 命令、上下文压缩与单元测试。
 
 ---
 
@@ -385,9 +387,9 @@ Step 3: internal/tools/registry.go + bash.go      ✅ 完成
 Step 4: internal/agent/types.go + loop.go          ✅ 完成（含单元测试）
 Step 5: cmd/gopi/main.go → 最简命令行能对话        ✅ 完成
           ⬆ 这里是第一个可演示节点（Phase 1 完成）
-Step 6: internal/tools/ 其余工具（read/write/edit/grep/find/ls）
-Step 7: internal/session/ → 持久化 + 压缩
-Step 8: internal/session/ → AgentSession 业务层 + Slash 命令
+Step 6: internal/tools/ 其余工具（read/write/edit/grep/find/ls） ✅ 完成
+Step 7: internal/session/ → 持久化 + 压缩                 ✅ 完成
+Step 8: internal/session/ → AgentSession 业务层 + Slash 命令 ✅ 完成
           ⬆ Phase 2 完成，完整 CLI 可用
 Step 9: internal/tui/ → Bubbletea TUI
 Step 10: 稳定性、性能优化

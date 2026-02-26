@@ -13,6 +13,7 @@ import (
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
 	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/coderyrh/gopi/internal/session"
 	"github.com/coderyrh/gopi/internal/tools"
 )
 
@@ -25,6 +26,10 @@ func main() {
 		modelLong = flag.String("model", "", "指定模型（默认使用配置文件中的模型）")
 		host      = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
 		noTools   = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
+		cont      = flag.Bool("c", false, "继续最近一次会话")
+		contLong  = flag.Bool("continue", false, "继续最近一次会话")
+		sessionID = flag.String("s", "", "打开指定会话 ID")
+		sessionLong = flag.String("session", "", "打开指定会话 ID")
 		printVer  = flag.Bool("version", false, "显示版本信息")
 		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
 	)
@@ -70,35 +75,52 @@ func main() {
 	if !*noTools {
 		registry.Register(tools.NewBashTool())
 		registry.Register(tools.NewReadTool())
+		registry.Register(tools.NewWriteTool())
+		registry.Register(tools.NewEditTool())
+		registry.Register(tools.NewGrepTool())
+		registry.Register(tools.NewFindTool())
+		registry.Register(tools.NewLSTool())
 	}
 
-	// 构建 LLM 工具列表
-	var llmTools []llm.Tool
-	if !*noTools {
-		llmTools, err = registry.ToLLMTools()
+	// 初始化会话管理
+	sessionsRoot, err := session.DefaultSessionsRoot()
+	if err != nil {
+		fatal("初始化会话目录失败: %v", err)
+	}
+	manager := session.NewSessionManager(sessionsRoot)
+
+	var loaded *session.LoadedSession
+	selectedSession := *sessionID
+	if *sessionLong != "" {
+		selectedSession = *sessionLong
+	}
+	shouldContinue := *cont || *contLong
+
+	cwd, _ := os.Getwd()
+	if selectedSession != "" {
+		loaded, err = manager.LoadByID(cwd, selectedSession)
 		if err != nil {
-			fatal("构建工具定义失败: %v", err)
+			fatal("加载指定会话失败: %v", err)
+		}
+	} else if shouldContinue {
+		loaded, err = manager.Continue(cwd)
+		if err != nil && !os.IsNotExist(err) {
+			fatal("继续会话失败: %v", err)
 		}
 	}
 
-	// 构建 Agent 配置
-	loopCfg := agent.AgentLoopConfig{
-		Model:    cfg.Ollama.Model,
-		Tools:    llmTools,
-		MaxTurns: 20,
-		SystemMsg: buildSystemMessage(),
+	sess, err := session.NewAgentSession(cfg, client, registry, manager, loaded, buildSystemMessage())
+	if err != nil {
+		fatal("创建会话失败: %v", err)
 	}
 
-	// 创建 Agent
-	a := agent.NewAgent(client, registry, loopCfg)
-
 	if *printMode {
-		runPrintMode(ctx, a)
+		runPrintMode(ctx, sess)
 		return
 	}
 
 	// 交互式模式
-	runInteractive(ctx, a, cfg)
+	runInteractive(ctx, sess, cfg, manager)
 }
 
 // buildSystemMessage 构建系统提示词
@@ -110,8 +132,9 @@ func buildSystemMessage() string {
 操作系统: %s
 
 你有以下工具可以使用:
-- bash: 执行 shell 命令，支持文件操作、代码执行等
-- read_file: 读取文件内容（支持指定行范围）
+- bash: 执行 shell 命令
+- read_file / write_file / edit_file: 读写与精确编辑文件
+- grep_search / find_files / list_dir: 搜索与文件遍历
 
 使用原则:
 1. 优先阅读文件再回答，避免猜测
@@ -132,7 +155,7 @@ func getOS() string {
 }
 
 // runInteractive 运行交互式 CLI
-func runInteractive(ctx context.Context, a *agent.Agent, cfg config.Config) {
+func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager) {
 	// 设置信号处理
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -140,9 +163,9 @@ func runInteractive(ctx context.Context, a *agent.Agent, cfg config.Config) {
 	go func() {
 		for sig := range sigCh {
 			if sig == syscall.SIGINT {
-				if a.IsStreaming() {
+				if sess.IsStreaming() {
 					fmt.Println("\n\n[已中止生成]")
-					a.Abort()
+					sess.Abort()
 				} else {
 					fmt.Println("\n再见！")
 					os.Exit(0)
@@ -179,72 +202,33 @@ func runInteractive(ctx context.Context, a *agent.Agent, cfg config.Config) {
 		}
 
 		// 处理内置命令
-		if handled := handleSlashCommand(input, a, cfg); handled {
+		if handled := handleSlashCommand(input, sess, cfg, manager); handled {
 			continue
 		}
 
 		// 发送给 Agent
-		runAgentTurn(ctx, a, input)
+		runAgentTurn(ctx, sess, input)
 	}
 }
 
 // runAgentTurn 执行一次 Agent 对话轮次
-func runAgentTurn(ctx context.Context, a *agent.Agent, userMsg string) {
-	ch := a.Prompt(ctx, userMsg)
+func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
+	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
+		handleOutputEvent(event)
+	})
+	defer unsubscribe()
 
 	fmt.Println()
-	var assistantBuf strings.Builder
-	inToolCall := false
-
-	for event := range ch {
-		switch event.Type {
-		case agent.AgentEventDelta:
-			fmt.Print(event.Delta)
-			assistantBuf.WriteString(event.Delta)
-
-		case agent.AgentEventToolCall:
-			if !inToolCall {
-				if assistantBuf.Len() > 0 {
-					fmt.Println()
-				}
-				inToolCall = true
-			}
-			fmt.Printf("\n[执行工具: %s]\n", event.ToolName)
-			if event.ToolArgs != "" && event.ToolArgs != "{}" {
-				// 只显示关键参数
-				fmt.Printf("  参数: %s\n", truncate(event.ToolArgs, 200))
-			}
-
-		case agent.AgentEventToolResult:
-			inToolCall = false
-			result := strings.TrimSpace(event.ToolResult)
-			if result != "" {
-				lines := strings.Split(result, "\n")
-				if len(lines) > 10 {
-					// 只显示前 10 行
-					preview := strings.Join(lines[:10], "\n")
-					fmt.Printf("[工具结果]\n%s\n... (%d 行)\n", preview, len(lines))
-				} else {
-					fmt.Printf("[工具结果]\n%s\n", result)
-				}
-			}
-			fmt.Println()
-
-		case agent.AgentEventEnd:
-			if assistantBuf.Len() > 0 {
-				fmt.Println()
-			}
-
-		case agent.AgentEventError:
-			if event.Err != nil && event.Err != context.Canceled {
-				fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", event.Err)
-			}
+	if err := sess.Prompt(userMsg); err != nil {
+		if err != context.Canceled {
+			fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", err)
 		}
 	}
+	fmt.Println()
 }
 
 // handleSlashCommand 处理 slash 命令，返回是否已处理
-func handleSlashCommand(input string, a *agent.Agent, cfg config.Config) bool {
+func handleSlashCommand(input string, sess session.Session, cfg config.Config, manager *session.SessionManager) bool {
 	if !strings.HasPrefix(input, "/") {
 		return false
 	}
@@ -256,24 +240,49 @@ func handleSlashCommand(input string, a *agent.Agent, cfg config.Config) bool {
 	case "/help":
 		fmt.Println(`可用命令:
   /help          显示帮助
+  /session       查看当前会话与历史
   /model <name>  切换模型
   /clear         清空对话历史
   /exit, /quit   退出`)
 		return true
 
+	case "/session":
+		cwd, _ := os.Getwd()
+		list, err := manager.List(cwd)
+		if err != nil {
+			fmt.Printf("读取会话列表失败: %v\n", err)
+			return true
+		}
+		fmt.Printf("当前会话: %s\n", sess.SessionID())
+		if len(list) == 0 {
+			fmt.Println("暂无历史会话")
+			return true
+		}
+		fmt.Println("最近会话:")
+		max := 10
+		if len(list) < max {
+			max = len(list)
+		}
+		for i := 0; i < max; i++ {
+			fmt.Printf("  - %s (%s)\n", list[i].ID, list[i].UpdatedAt.Format("2006-01-02 15:04:05"))
+		}
+		return true
+
 	case "/model":
 		if len(parts) < 2 {
-			fmt.Printf("当前模型: %s\n", a.Model())
+			fmt.Printf("当前模型: %s\n", sess.Model())
 		} else {
 			newModel := parts[1]
-			a.SetModel(newModel)
-			fmt.Printf("已切换到模型: %s\n", newModel)
+			if err := sess.SetModel(newModel); err != nil {
+				fmt.Printf("切换模型失败: %v\n", err)
+			} else {
+				fmt.Printf("已切换到模型: %s\n", newModel)
+			}
 		}
 		return true
 
 	case "/clear":
-		a.ClearMessages()
-		fmt.Println("对话历史已清空")
+		fmt.Println("当前版本未提供 /clear 的会话内原地清空，建议新开会话。")
 		return true
 
 	case "/exit", "/quit":
@@ -287,8 +296,32 @@ func handleSlashCommand(input string, a *agent.Agent, cfg config.Config) bool {
 	}
 }
 
+func handleOutputEvent(event agent.AgentEvent) {
+	switch event.Type {
+	case agent.AgentEventDelta:
+		fmt.Print(event.Delta)
+	case agent.AgentEventToolCall:
+		fmt.Printf("\n[执行工具: %s]\n", event.ToolName)
+		if event.ToolArgs != "" && event.ToolArgs != "{}" {
+			fmt.Printf("  参数: %s\n", truncate(event.ToolArgs, 200))
+		}
+	case agent.AgentEventToolResult:
+		result := strings.TrimSpace(event.ToolResult)
+		if result != "" {
+			lines := strings.Split(result, "\n")
+			if len(lines) > 10 {
+				preview := strings.Join(lines[:10], "\n")
+				fmt.Printf("[工具结果]\n%s\n... (%d 行)\n", preview, len(lines))
+			} else {
+				fmt.Printf("[工具结果]\n%s\n", result)
+			}
+		}
+		fmt.Println()
+	}
+}
+
 // runPrintMode 非交互模式：从 stdin 读取，处理后输出到 stdout
-func runPrintMode(ctx context.Context, a *agent.Agent) {
+func runPrintMode(_ context.Context, sess session.Session) {
 	scanner := bufio.NewScanner(os.Stdin)
 	var lines []string
 	for scanner.Scan() {
@@ -301,17 +334,16 @@ func runPrintMode(ctx context.Context, a *agent.Agent) {
 		os.Exit(1)
 	}
 
-	ch := a.Prompt(ctx, input)
-	for event := range ch {
-		switch event.Type {
-		case agent.AgentEventDelta:
+	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
+		if event.Type == agent.AgentEventDelta {
 			fmt.Print(event.Delta)
-		case agent.AgentEventError:
-			if event.Err != nil {
-				fmt.Fprintf(os.Stderr, "错误: %v\n", event.Err)
-				os.Exit(1)
-			}
 		}
+	})
+	defer unsubscribe()
+
+	if err := sess.Prompt(input); err != nil {
+		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		os.Exit(1)
 	}
 	fmt.Println()
 }

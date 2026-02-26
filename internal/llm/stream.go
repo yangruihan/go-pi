@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	ollamaapi "github.com/ollama/ollama/api"
 )
@@ -45,11 +44,13 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest) (<-chan Event, erro
 
 			// 处理工具调用
 			for _, tc := range resp.Message.ToolCalls {
+				argBytes, _ := json.Marshal(tc.Function.Arguments)
 				call := ToolCall{
+					ID:   tc.Function.Name,
 					Type: "function",
 					Function: ToolCallFunction{
 						Name:      tc.Function.Name,
-						Arguments: fmt.Sprintf("%v", tc.Function.Arguments),
+						Arguments: string(argBytes),
 					},
 				}
 				toolCalls = append(toolCalls, call)
