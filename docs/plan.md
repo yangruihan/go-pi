@@ -323,14 +323,14 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 - [x] TUI 中的树状会话选择器
 
 ### 5.4 技能文件 (Skills)
-- [x] 读取项目根目录 `GOPI.md` 作为系统提示词追加
+- [x] 读取项目根目录 `AGENT.md` 作为系统提示词追加
 - [x] 支持 `/skill:name` 语法加载技能文件
 
 **完成说明（2026-02-26）：**
 - 5.1：新增 OpenAI 兼容客户端与 CLI `--provider/--api-base/--api-key`，并支持 `~/.gopi/models.yaml` 模型别名映射。
 - 5.2：新增扩展 Slash 命令注册 API、YAML 自定义 Shell 工具加载、`before_prompt`/`after_response` Hook 执行。
 - 5.3：会话持久化新增父会话关系与 entry-id，支持 `/session entries` + `/checkout <entry-id>` 分支回退；TUI 会话选择器按树形前缀展示。
-- 5.4：启动自动读取项目根目录 `GOPI.md` 追加到系统提示；CLI/TUI 支持 `/skill:<name>` 从 `.gopi/skills/<name>.md` 或 `~/.gopi/skills/<name>.md` 加载技能。
+- 5.4：启动自动读取项目根目录 `AGENT.md` 追加到系统提示；CLI/TUI 支持 `/skill:<name>` 从 `.gopi/skills/<name>.md` 或 `~/.gopi/skills/<name>.md` 加载技能。
 
 ### 5.5 分发与安装
 - [ ] `Makefile` 一键构建多平台二进制

@@ -323,10 +323,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+enter":
 			m.input += "\n"
 			return m, nil
-		case "backspace":
-			if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
-			}
+		case "backspace", "ctrl+h", "delete":
+			m.input = dropLastRune(m.input)
 			return m, nil
 		case "pgup":
 			m.scroll += 10
@@ -375,77 +373,54 @@ func (m AppModel) View() string {
 		m.width = 120
 	}
 	if m.height == 0 {
-		m.height = 36
+		m.height = 30
 	}
-	if m.height < 8 {
-		return m.theme.Hint.Render("窗口高度过小，请增大终端高度（建议 >= 10 行）")
+	if m.height < 6 {
+		return m.theme.Hint.Render("窗口高度过小，请增大终端高度（建议 >= 8 行）")
 	}
 
-	innerWidth := maxInt(20, m.width-2)
+	innerWidth := maxInt(20, m.width-1)
+	header := m.theme.Hint.Render(fmt.Sprintf("Gopi | model=%s | session=%s", m.sess.Model(), m.sess.SessionID()))
 
-	toolView := renderToolPanel(m.tools, m.expandTools)
-	editorView := renderEditor(m.input, innerWidth)
-	footerView := renderFooter(m.sess.Model(), m.tokens, m.stream, m.sess.SessionID())
+	statusLines := []string{renderFooter(m.sess.Model(), m.tokens, m.stream, m.sess.SessionID())}
 	if m.compacting {
-		footerView += "\n" + m.theme.Hint.Render("[正在压缩上下文，请稍候...]")
+		statusLines = append(statusLines, "[正在压缩上下文，请稍候...]")
 	}
 	if strings.TrimSpace(m.statusHint) != "" {
-		footerView += "\n" + m.theme.Hint.Render(m.statusHint)
+		statusLines = append(statusLines, m.statusHint)
+	}
+	if strings.TrimSpace(m.lastErr) != "" {
+		statusLines = append(statusLines, "错误: "+m.lastErr)
 	}
 
-	if m.lastErr != "" {
-		footerView += "\n" + m.theme.Error.Render("错误: "+m.lastErr)
+	inputView := renderEditor(m.input, innerWidth)
+	inputLines := strings.Count(inputView, "\n") + 1
+
+	toolLines := 0
+	toolView := ""
+	if m.expandTools && len(m.tools) > 0 {
+		toolView = renderToolPanel(m.tools, true)
+		toolLines = clampInt(strings.Count(toolView, "\n")+1, 0, 6)
 	}
 
-	headerH := 1
-	footerH := clampInt(strings.Count(footerView, "\n")+1, 1, 3)
-	editorH := 4
-	toolH := 0
-	if m.expandTools {
-		toolH = 6
+	reserved := 1 + len(statusLines) + inputLines + toolLines
+	msgH := m.height - reserved
+	if msgH < 3 {
+		msgH = 3
 	}
+	msgView := renderMessages(m.msgs, innerWidth, m.scroll, msgH)
 
-	// 优先保障消息区可见：空间不足时依次裁剪 tool -> footer -> editor
-	minMsgH := 5
-	need := headerH + msgHWithBorder(minMsgH) + editorH + footerH + toolH
-	if need > m.height {
-		over := need - m.height
-		toolH, over = shrinkSection(toolH, 0, over)
-		footerH, over = shrinkSection(footerH, 1, over)
-		editorH, over = shrinkSection(editorH, 3, over)
-		if over > 0 {
-			minMsgH = maxInt(3, minMsgH-over)
-		}
+	parts := []string{header, msgView}
+	if toolLines > 0 {
+		parts = append(parts, m.theme.Hint.Render(limitLines(toolView, toolLines)))
 	}
-
-	msgH := m.height - headerH - editorH - footerH - toolH
-	if msgH < msgHWithBorder(3) {
-		msgH = msgHWithBorder(3)
-	}
-
-	msgContentH := maxInt(1, msgH-2)
-	msgView := renderMessages(m.msgs, innerWidth, m.scroll, msgContentH)
-
-	msgPane := m.theme.Border.Width(innerWidth).Height(msgH).Render(msgView)
-	toolPane := ""
-	if toolH > 0 {
-		toolPane = m.theme.Border.Width(innerWidth).Height(toolH).Render(toolView)
-	}
-	editorPane := m.theme.Border.Width(innerWidth).Height(editorH).Render(editorView)
-	footerPane := lipgloss.NewStyle().Width(m.width).Height(footerH).Render(m.theme.Footer.Render(limitLines(footerView, footerH)))
-
-	header := lipgloss.NewStyle().Width(m.width).Render(m.theme.Hint.Render(fmt.Sprintf("Gopi TUI | %s", m.sess.Model())))
-	parts := []string{header, msgPane}
-	if toolPane != "" {
-		parts = append(parts, toolPane)
-	}
-	parts = append(parts, editorPane, footerPane)
-	base := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	parts = append(parts, m.theme.Hint.Render(strings.Join(statusLines, "\n")), inputView)
+	base := strings.Join(parts, "\n")
 	if m.modal != modalNone {
 		modal := m.renderModal()
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
-	// 强制裁剪到终端高度，避免底部块把顶部挤出可视区域
+	// 自适应布局，不使用固定框高；仅做终端高度裁剪
 	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, base)
 }
 
@@ -625,4 +600,15 @@ func estimateTokenLike(msgs []chatMessage) int {
 		return 0
 	}
 	return total
+}
+
+func dropLastRune(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	if len(r) == 0 {
+		return ""
+	}
+	return string(r[:len(r)-1])
 }

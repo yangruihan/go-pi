@@ -29,8 +29,8 @@ func LoadProjectSkill(cwd, name string) (string, error) {
 	return "", fmt.Errorf("skill not found: %s", name)
 }
 
-func LoadGOPIMarkdown(cwd string) string {
-	path := filepath.Join(cwd, "GOPI.md")
+func LoadAgentMarkdown(cwd string) string {
+	path := filepath.Join(cwd, "AGENT.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""

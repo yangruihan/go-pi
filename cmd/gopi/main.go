@@ -251,8 +251,8 @@ func buildSystemMessage() string {
 3. 回答简洁、准确，代码有注释
 4. 中文回答（除非用户要求英文）`, cwd, getOS())
 
-	if skill := strings.TrimSpace(skills.LoadGOPIMarkdown(cwd)); skill != "" {
-		base += "\n\n项目技能文件(GOPI.md)：\n" + skill
+	if skill := strings.TrimSpace(skills.LoadAgentMarkdown(cwd)); skill != "" {
+		base += "\n\n项目代理配置文件(AGENT.md)：\n" + skill
 	}
 	return base
 }
