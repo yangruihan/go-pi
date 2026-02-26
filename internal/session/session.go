@@ -66,6 +66,7 @@ type AgentSession struct {
 
 	streaming bool
 	cancelFn  context.CancelFunc
+	pendingJSONLLines [][]byte
 }
 
 func NewAgentSession(
@@ -133,10 +134,12 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 	copy(working, s.messages)
 	userMsg := llm.Message{Role: "user", Content: text, Images: po.images}
 	working = append(working, userMsg)
-	_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: userMsg.Role, Content: userMsg.Content, Images: userMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
-
 	model := s.model
 	s.mu.Unlock()
+
+	if err := s.persistEntry(messageEntry{Type: entryMessage, Role: userMsg.Role, Content: userMsg.Content, Images: userMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
+	}
 
 	llmTools, err := s.registry.ToLLMTools()
 	if err != nil {
@@ -163,13 +166,17 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 		case agent.AgentEventToolResult:
 			toolMsg := llm.Message{Role: "tool", Content: ev.ToolResult}
 			working = append(working, toolMsg)
-			_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: toolMsg.Role, Content: toolMsg.Content, Images: toolMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
+			if err := s.persistEntry(messageEntry{Type: entryMessage, Role: toolMsg.Role, Content: toolMsg.Content, Images: toolMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+				s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
+			}
 		case agent.AgentEventTurnEnd:
 			assistantText := strings.TrimSpace(turnBuilder.String())
 			if assistantText != "" {
 				assistant := llm.Message{Role: "assistant", Content: assistantText}
 				working = append(working, assistant)
-				_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: assistant.Role, Content: assistant.Content, Images: assistant.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
+				if err := s.persistEntry(messageEntry{Type: entryMessage, Role: assistant.Role, Content: assistant.Content, Images: assistant.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+					s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: fmt.Errorf("会话写入失败（已缓冲，稍后重试）: %w", err)})
+				}
 			}
 			turnBuilder.Reset()
 		case agent.AgentEventError:
@@ -185,7 +192,7 @@ func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 
 	_ = s.tryCompact()
 	s.finishStreaming()
-	return finalErr
+	return llm.EnhanceModelError(finalErr, model)
 }
 
 func (s *AgentSession) Steer(text string) error {
@@ -249,7 +256,21 @@ func (s *AgentSession) Messages() []llm.Message {
 	return out
 }
 
-func (s *AgentSession) Save() error { return nil }
+func (s *AgentSession) Save() error {
+	s.mu.Lock()
+	pending := append([][]byte(nil), s.pendingJSONLLines...)
+	file := s.sessionFile
+	s.mu.Unlock()
+	for _, line := range pending {
+		if err := appendJSONLLine(file, line); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.pendingJSONLLines = nil
+	s.mu.Unlock()
+	return nil
+}
 
 func (s *AgentSession) SessionFile() string {
 	s.mu.Lock()
@@ -322,14 +343,45 @@ func (s *AgentSession) tryCompact() error {
 
 	s.mu.Lock()
 	s.messages = res.Messages
-	file := s.sessionFile
 	s.mu.Unlock()
 
-	if err := appendJSONL(file, compactionEntry{
+	if err := s.persistEntry(compactionEntry{
 		Type: entryCompaction, Summary: res.Summary, TokenBefore: res.TokenBefore, TokenAfter: res.TokenAfter, Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
 		return err
 	}
 	s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventToolResult, ToolName: "context_compaction", ToolResult: fmt.Sprintf("压缩完成：%d -> %d tokens", res.TokenBefore, res.TokenAfter)})
+	return nil
+}
+
+func (s *AgentSession) persistEntry(entry any) error {
+	line, err := marshalJSONLLine(entry)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	file := s.sessionFile
+	pending := append([][]byte(nil), s.pendingJSONLLines...)
+	s.mu.Unlock()
+
+	for _, p := range pending {
+		if err := appendJSONLLine(file, p); err != nil {
+			s.mu.Lock()
+			s.pendingJSONLLines = append(pending, line)
+			s.mu.Unlock()
+			return err
+		}
+	}
+	if err := appendJSONLLine(file, line); err != nil {
+		s.mu.Lock()
+		s.pendingJSONLLines = append(pending, line)
+		s.mu.Unlock()
+		return err
+	}
+
+	s.mu.Lock()
+	s.pendingJSONLLines = nil
+	s.mu.Unlock()
 	return nil
 }

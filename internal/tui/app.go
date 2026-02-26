@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
 	"github.com/coderyrh/gopi/internal/session"
+	"golang.org/x/term"
 )
 
 type agentEventMsg struct {
@@ -20,6 +22,11 @@ type agentEventMsg struct {
 
 type promptDoneMsg struct {
 	err error
+}
+
+type resizePollMsg struct {
+	width  int
+	height int
 }
 
 type modalType int
@@ -97,7 +104,17 @@ func Run(sess session.Session, cfg config.Config) error {
 }
 
 func (m AppModel) Init() tea.Cmd {
-	return waitForEvent(m.eventCh)
+	return tea.Batch(waitForEvent(m.eventCh), pollWindowSizeCmd())
+}
+
+func pollWindowSizeCmd() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+		w, h, err := term.GetSize(int(os.Stdout.Fd()))
+		if err != nil || w <= 0 || h <= 0 {
+			return nil
+		}
+		return resizePollMsg{width: w, height: h}
+	})
 }
 
 func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
@@ -125,7 +142,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
-		return m, nil
+		return m, pollWindowSizeCmd()
+
+	case resizePollMsg:
+		if v.width > 0 && v.height > 0 {
+			m.width, m.height = v.width, v.height
+		}
+		return m, pollWindowSizeCmd()
 
 	case agentEventMsg:
 		ev := v.event
@@ -291,15 +314,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "pgup":
-			if m.scroll > 0 {
-				m.scroll -= 10
-				if m.scroll < 0 {
-					m.scroll = 0
-				}
-			}
+			m.scroll += 10
 			return m, nil
 		case "pgdown":
-			m.scroll += 10
+			m.scroll -= 10
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
 			return m, nil
 		case "up":
 			if len(m.history) == 0 {
@@ -341,10 +362,14 @@ func (m AppModel) View() string {
 	if m.height == 0 {
 		m.height = 36
 	}
+	if m.height < 8 {
+		return m.theme.Hint.Render("窗口高度过小，请增大终端高度（建议 >= 10 行）")
+	}
 
-	msgView := renderMessages(m.msgs, m.width-4, m.scroll)
+	innerWidth := maxInt(20, m.width-2)
+
 	toolView := renderToolPanel(m.tools, m.expandTools)
-	editorView := renderEditor(m.input, m.width-4)
+	editorView := renderEditor(m.input, innerWidth)
 	footerView := renderFooter(m.sess.Model(), m.tokens, m.stream, m.sess.SessionID())
 	if m.compacting {
 		footerView += "\n" + m.theme.Hint.Render("[正在压缩上下文，请稍候...]")
@@ -357,23 +382,56 @@ func (m AppModel) View() string {
 		footerView += "\n" + m.theme.Error.Render("错误: "+m.lastErr)
 	}
 
-	bodyHeight := m.height - 10
-	if bodyHeight < 8 {
-		bodyHeight = 8
+	headerH := 1
+	footerH := clampInt(strings.Count(footerView, "\n")+1, 1, 3)
+	editorH := 4
+	toolH := 0
+	if m.expandTools {
+		toolH = 6
 	}
 
-	msgPane := m.theme.Border.Width(m.width - 4).Height(bodyHeight).Render(msgView)
-	toolPane := m.theme.Border.Width(m.width - 4).Height(6).Render(toolView)
-	editorPane := m.theme.Border.Width(m.width - 4).Height(4).Render(editorView)
-	footerPane := lipgloss.NewStyle().Width(m.width - 2).Render(m.theme.Footer.Render(footerView))
+	// 优先保障消息区可见：空间不足时依次裁剪 tool -> footer -> editor
+	minMsgH := 5
+	need := headerH + msgHWithBorder(minMsgH) + editorH + footerH + toolH
+	if need > m.height {
+		over := need - m.height
+		toolH, over = shrinkSection(toolH, 0, over)
+		footerH, over = shrinkSection(footerH, 1, over)
+		editorH, over = shrinkSection(editorH, 3, over)
+		if over > 0 {
+			minMsgH = maxInt(3, minMsgH-over)
+		}
+	}
 
-	header := m.theme.Hint.Render(fmt.Sprintf("Gopi TUI | %s", m.sess.Model()))
-	base := lipgloss.JoinVertical(lipgloss.Left, header, msgPane, toolPane, editorPane, footerPane)
+	msgH := m.height - headerH - editorH - footerH - toolH
+	if msgH < msgHWithBorder(3) {
+		msgH = msgHWithBorder(3)
+	}
+
+	msgContentH := maxInt(1, msgH-2)
+	msgView := renderMessages(m.msgs, innerWidth, m.scroll, msgContentH)
+
+	msgPane := m.theme.Border.Width(innerWidth).Height(msgH).Render(msgView)
+	toolPane := ""
+	if toolH > 0 {
+		toolPane = m.theme.Border.Width(innerWidth).Height(toolH).Render(toolView)
+	}
+	editorPane := m.theme.Border.Width(innerWidth).Height(editorH).Render(editorView)
+	footerPane := lipgloss.NewStyle().Width(m.width).Height(footerH).Render(m.theme.Footer.Render(limitLines(footerView, footerH)))
+
+	header := lipgloss.NewStyle().Width(m.width).Render(m.theme.Hint.Render(fmt.Sprintf("Gopi TUI | %s", m.sess.Model())))
+	parts := []string{header, msgPane}
+	if toolPane != "" {
+		parts = append(parts, toolPane)
+	}
+	parts = append(parts, editorPane, footerPane)
+	base := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	if m.modal != modalNone {
 		modal := m.renderModal()
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
-	return base
+	// 强制裁剪到终端高度，避免底部块把顶部挤出可视区域
+	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, base)
 }
 
 func (m AppModel) renderModal() string {
@@ -401,7 +459,7 @@ func (m AppModel) renderModal() string {
 		}
 	}
 	body := title + "\n\n" + strings.Join(lines, "\n")
-	return m.theme.Border.Width(min(80, m.width-6)).Render(body)
+	return m.theme.Border.Width(min(80, m.width-4)).Render(body)
 }
 
 func buildModelItems(cfg config.Config, current string) []string {
@@ -455,6 +513,52 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func clampInt(v, low, high int) int {
+	if v < low {
+		return low
+	}
+	if v > high {
+		return high
+	}
+	return v
+}
+
+func shrinkSection(current, minValue, over int) (int, int) {
+	if over <= 0 {
+		return current, 0
+	}
+	can := current - minValue
+	if can <= 0 {
+		return current, over
+	}
+	if can >= over {
+		return current - over, 0
+	}
+	return minValue, over - can
+}
+
+func limitLines(text string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= maxLines {
+		return text
+	}
+	return strings.Join(lines[:maxLines], "\n")
+}
+
+func msgHWithBorder(contentH int) int {
+	return contentH + 2
 }
 
 func estimateTokenLike(msgs []chatMessage) int {

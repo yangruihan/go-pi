@@ -107,6 +107,9 @@ func (b *BashTool) ensureStarted() error {
 
 // Execute 执行 bash 命令，流式返回输出
 func (b *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	var a BashArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("parse bash args: %w", err)
@@ -125,7 +128,23 @@ func (b *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	defer cancel()
 
 	// 直接使用 exec.CommandContext 执行单次命令（兼容性更好）
-	return b.runCommand(ctx, a.Command)
+	result, err := b.runCommand(ctx, a.Command)
+	if err == nil {
+		return result, nil
+	}
+
+	// 崩溃/启动异常自动重试一次（Phase4 健壮性）
+	if ctx.Err() == nil {
+		retryResult, retryErr := b.runCommand(ctx, a.Command)
+		if retryErr == nil {
+			if strings.TrimSpace(result) != "" {
+				retryResult = strings.TrimSpace(result) + "\n[bash 已自动重试恢复]\n" + retryResult
+			}
+			return retryResult, nil
+		}
+	}
+
+	return result, err
 }
 
 // runCommand 使用独立进程执行命令（跨平台兼容）

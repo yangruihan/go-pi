@@ -211,6 +211,22 @@ func (m *SessionManager) Load(filePath string) (*LoadedSession, error) {
 }
 
 func appendJSONL(filePath string, v any) error {
+	line, err := marshalJSONLLine(v)
+	if err != nil {
+		return err
+	}
+	return appendJSONLLine(filePath, line)
+}
+
+func marshalJSONLLine(v any) ([]byte, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+func appendJSONLLine(filePath string, line []byte) error {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return err
 	}
@@ -219,12 +235,7 @@ func appendJSONL(filePath string, v any) error {
 		return err
 	}
 	defer f.Close()
-
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	if _, err := f.Write(line); err != nil {
 		return err
 	}
 	return nil

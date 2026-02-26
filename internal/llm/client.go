@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	ollamaapi "github.com/ollama/ollama/api"
@@ -38,6 +39,46 @@ func (c *Client) Ping(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return c.api.Heartbeat(ctx)
+}
+
+// PingWithRetry 带指数退避的连接检测
+func (c *Client) PingWithRetry(ctx context.Context, maxRetries int) error {
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := c.Ping(ctx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if i == maxRetries-1 {
+			break
+		}
+		backoff := time.Duration(1<<i) * 200 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return lastErr
+}
+
+// EnhanceModelError 为模型相关错误添加友好提示
+func EnhanceModelError(err error, model string) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "model") && (strings.Contains(msg, "not found") || strings.Contains(msg, "no such") || strings.Contains(msg, "does not exist")) {
+		if strings.TrimSpace(model) != "" {
+			return fmt.Errorf("%w\n提示: 目标模型可能未拉取，请执行: ollama pull %s", err, model)
+		}
+		return fmt.Errorf("%w\n提示: 目标模型可能未拉取，请先执行: ollama list / ollama pull <model>", err)
+	}
+	return err
 }
 
 // ListModels 列出可用模型

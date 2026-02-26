@@ -8,11 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/coderyrh/gopi/internal/agent"
 	"github.com/coderyrh/gopi/internal/config"
 	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/coderyrh/gopi/internal/perf"
 	"github.com/coderyrh/gopi/internal/session"
 	"github.com/coderyrh/gopi/internal/tools"
 	gotui "github.com/coderyrh/gopi/internal/tui"
@@ -34,6 +37,7 @@ func main() {
 		printVer  = flag.Bool("version", false, "显示版本信息")
 		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
 		tuiMode   = flag.Bool("tui", false, "启用 TUI 模式")
+		perfMode  = flag.Bool("perf", false, "运行 Phase4.2 性能测量")
 	)
 	flag.Parse()
 
@@ -66,16 +70,28 @@ func main() {
 		fatal("创建 LLM 客户端失败: %v", err)
 	}
 
-	// 检测 Ollama 连接
+	// 检测 Ollama 连接（带重试）
 	ctx := context.Background()
-	if err := client.Ping(ctx); err != nil {
-		fatal("无法连接到 Ollama (%s): %v\n提示: 请确认 Ollama 已启动，或使用 --host 指定正确的地址", cfg.Ollama.Host, err)
+	if err := client.PingWithRetry(ctx, 3); err != nil {
+		if !*perfMode {
+			fatal("无法连接到 Ollama (%s): %v\n提示: 请确认 Ollama 已启动，或使用 --host 指定正确的地址", cfg.Ollama.Host, err)
+		}
+		fmt.Fprintf(os.Stderr, "警告: Ollama 不可用，--perf 将跳过首 token 测量: %v\n", err)
+		client = nil
+	}
+
+	if *perfMode {
+		report := perf.Run(ctx, client, cfg)
+		printPerfReport(report)
+		return
 	}
 
 	// 工具注册
 	registry := tools.NewRegistry()
+	var bashTool *tools.BashTool
 	if !*noTools {
-		registry.Register(tools.NewBashTool())
+		bashTool = tools.NewBashTool()
+		registry.Register(bashTool)
 		registry.Register(tools.NewReadTool())
 		registry.Register(tools.NewWriteTool())
 		registry.Register(tools.NewEditTool())
@@ -116,6 +132,8 @@ func main() {
 		fatal("创建会话失败: %v", err)
 	}
 
+	defer cleanupResources(sess, bashTool)
+
 	if *printMode {
 		runPrintMode(ctx, sess)
 		return
@@ -129,7 +147,7 @@ func main() {
 	}
 
 	// 交互式模式
-	runInteractive(ctx, sess, cfg, manager)
+	runInteractive(ctx, sess, cfg, manager, bashTool)
 }
 
 // buildSystemMessage 构建系统提示词
@@ -164,10 +182,17 @@ func getOS() string {
 }
 
 // runInteractive 运行交互式 CLI
-func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager) {
+func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager, bashTool *tools.BashTool) {
 	// 设置信号处理
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	var exitOnce sync.Once
+	cleanupAndExit := func(code int) {
+		exitOnce.Do(func() {
+			cleanupResources(sess, bashTool)
+			os.Exit(code)
+		})
+	}
 
 	go func() {
 		for sig := range sigCh {
@@ -177,10 +202,10 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 					sess.Abort()
 				} else {
 					fmt.Println("\n再见！")
-					os.Exit(0)
+					cleanupAndExit(0)
 				}
 			} else {
-				os.Exit(0)
+				cleanupAndExit(0)
 			}
 		}
 	}()
@@ -217,6 +242,45 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 
 		// 发送给 Agent
 		runAgentTurn(ctx, sess, input)
+	}
+}
+
+func cleanupResources(sess session.Session, bashTool *tools.BashTool) {
+	if sess != nil {
+		_ = sess.Save()
+	}
+	if bashTool != nil {
+		bashTool.Close()
+	}
+}
+
+func printPerfReport(r perf.Report) {
+	fmt.Println("=== Gopi Perf (Phase 4.2) ===")
+	if r.FirstTokenError != "" {
+		fmt.Printf("首 Token 延迟: N/A (%s)\n", r.FirstTokenError)
+	} else {
+		fmt.Printf("首 Token 延迟: %v\n", r.FirstTokenLatency)
+	}
+	fmt.Printf("TUI 帧耗时: avg=%v, max=%v\n", r.TUIFrameAvg, r.TUIFrameMax)
+	if r.SessionLoad1000 > 0 {
+		fmt.Printf("1000 条会话加载: %v\n", r.SessionLoad1000)
+	} else {
+		fmt.Println("1000 条会话加载: N/A")
+	}
+
+	fmt.Printf("瓶颈识别: %s\n", r.Bottleneck)
+
+	if r.FirstTokenError == "" {
+		if r.FirstTokenLatency < time.Second {
+			fmt.Println("目标检查: 首 token < 1s ✅")
+		} else {
+			fmt.Println("目标检查: 首 token < 1s ❌")
+		}
+	}
+	if r.TUIFrameMax < 16*time.Millisecond {
+		fmt.Println("目标检查: TUI 单帧 < 16ms ✅")
+	} else {
+		fmt.Println("目标检查: TUI 单帧 < 16ms ❌")
 	}
 }
 
