@@ -326,7 +326,7 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 		}
 
 		// 发送给 Agent
-		runAgentTurn(ctx, sess, input)
+		runAgentTurn(ctx, sess, input, cfg.Ollama.Timeout)
 	}
 }
 
@@ -370,7 +370,7 @@ func printPerfReport(r perf.Report) {
 }
 
 // runAgentTurn 执行一次 Agent 对话轮次
-func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
+func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeout time.Duration) {
 	renderer := &cliOutputRenderer{}
 	indicator := newThinkingIndicator()
 	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
@@ -384,7 +384,32 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 	defer unsubscribe()
 
 	fmt.Println()
-	if err := sess.Prompt(userMsg); err != nil {
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sess.Prompt(userMsg)
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(timeout):
+		sess.Abort()
+		fmt.Fprintf(os.Stderr, "\n[超时] 本轮超过 %v，已自动中止，可重试或调大 timeout。\n", timeout)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		indicator.StopAndClear()
+		renderer.flush()
+		fmt.Println()
+		return
+	}
+
+	if err != nil {
 		if err != context.Canceled {
 			fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", err)
 		}

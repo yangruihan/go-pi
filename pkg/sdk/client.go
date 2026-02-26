@@ -203,7 +203,7 @@ func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
 		return strings.TrimSpace(b.String()), nil
 	case <-ctx.Done():
 		c.sess.Abort()
-		<-done
+		go func() { <-done }()
 		return "", ctx.Err()
 	}
 }
