@@ -2,6 +2,7 @@
 build/
 *.exe
 *.exe~
+/build/gopi.exe
 
 # OS/editor
 .DS_Store
