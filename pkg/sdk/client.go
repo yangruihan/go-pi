@@ -27,6 +27,7 @@ type Options struct {
 	NoTools        bool
 	ContinueLatest bool
 	SessionID      string
+	PreferConfigModel bool
 }
 
 type Client struct {
@@ -40,6 +41,8 @@ type RuntimeInfo struct {
 	Mode        string
 	Provider    string
 	Model       string
+	ConfigModel string
+	SessionModel string
 	Host        string
 	APIBase     string
 	CWD         string
@@ -175,10 +178,20 @@ func New(opts Options) (*Client, error) {
 		return nil, err
 	}
 
+	if opts.PreferConfigModel {
+		want := strings.TrimSpace(cfg.Ollama.Model)
+		have := strings.TrimSpace(sess.Model())
+		if want != "" && have != want {
+			_ = sess.SetModel(want)
+		}
+	}
+
 	info := RuntimeInfo{
 		Mode:        "sdk",
 		Provider:    strings.TrimSpace(cfg.LLM.Provider),
-		Model:       strings.TrimSpace(cfg.Ollama.Model),
+		ConfigModel: strings.TrimSpace(cfg.Ollama.Model),
+		SessionModel: strings.TrimSpace(sess.Model()),
+		Model:       strings.TrimSpace(sess.Model()),
 		Host:        strings.TrimSpace(cfg.Ollama.Host),
 		APIBase:     strings.TrimSpace(cfg.LLM.BaseURL),
 		CWD:         cwd,
