@@ -51,6 +51,31 @@ type RuntimeInfo struct {
 	ConfigPaths  []string
 }
 
+type ToolTrace struct {
+	ToolCallID string
+	ToolName   string
+	ToolArgs   string
+	ToolResult string
+}
+
+type AskMeta struct {
+	ToolTraces []ToolTrace
+}
+
+func (m AskMeta) ToolCallCount() int {
+	return len(m.ToolTraces)
+}
+
+func (m AskMeta) WriteToolCallCount() int {
+	count := 0
+	for _, t := range m.ToolTraces {
+		if strings.EqualFold(strings.TrimSpace(t.ToolName), "write_file") {
+			count++
+		}
+	}
+	return count
+}
+
 func New(opts Options) (*Client, error) {
 	cwd := strings.TrimSpace(opts.CWD)
 	if cwd == "" {
@@ -204,19 +229,47 @@ func New(opts Options) (*Client, error) {
 }
 
 func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
+	text, _, err := c.AskWithMeta(ctx, promptText)
+	return text, err
+}
+
+func (c *Client) AskWithMeta(ctx context.Context, promptText string) (string, AskMeta, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if strings.TrimSpace(promptText) == "" {
-		return "", fmt.Errorf("prompt cannot be empty")
+		return "", AskMeta{}, fmt.Errorf("prompt cannot be empty")
 	}
 
 	var b strings.Builder
+	meta := AskMeta{ToolTraces: make([]ToolTrace, 0, 2)}
+	traceIndex := make(map[string]int)
 	var finalErr error
 	unsubscribe := c.sess.Subscribe(func(event agent.AgentEvent) {
 		switch event.Type {
 		case agent.AgentEventDelta:
 			b.WriteString(event.Delta)
+		case agent.AgentEventToolCall:
+			trace := ToolTrace{
+				ToolCallID: strings.TrimSpace(event.ToolCallID),
+				ToolName:   strings.TrimSpace(event.ToolName),
+				ToolArgs:   strings.TrimSpace(event.ToolArgs),
+			}
+			meta.ToolTraces = append(meta.ToolTraces, trace)
+			if trace.ToolCallID != "" {
+				traceIndex[trace.ToolCallID] = len(meta.ToolTraces) - 1
+			}
+		case agent.AgentEventToolResult:
+			toolCallID := strings.TrimSpace(event.ToolCallID)
+			if idx, ok := traceIndex[toolCallID]; ok {
+				meta.ToolTraces[idx].ToolResult = strings.TrimSpace(event.ToolResult)
+			} else {
+				meta.ToolTraces = append(meta.ToolTraces, ToolTrace{
+					ToolCallID: toolCallID,
+					ToolName:   strings.TrimSpace(event.ToolName),
+					ToolResult: strings.TrimSpace(event.ToolResult),
+				})
+			}
 		case agent.AgentEventError:
 			if event.Err != nil {
 				finalErr = event.Err
@@ -233,12 +286,12 @@ func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
 	select {
 	case err := <-done:
 		if err != nil {
-			return "", err
+			return "", AskMeta{}, err
 		}
 		if finalErr != nil {
-			return "", finalErr
+			return "", AskMeta{}, finalErr
 		}
-		return strings.TrimSpace(b.String()), nil
+		return strings.TrimSpace(b.String()), meta, nil
 	case <-ctx.Done():
 		c.sess.Abort()
 		select {
@@ -246,7 +299,7 @@ func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
 		case <-time.After(1200 * time.Millisecond):
 			go func() { <-done }()
 		}
-		return "", ctx.Err()
+		return "", AskMeta{}, ctx.Err()
 	}
 }
 

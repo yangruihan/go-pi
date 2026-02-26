@@ -98,9 +98,10 @@ func RunLoop(
 				case llm.EventToolCallStart:
 					if event.Tool != nil {
 						ch <- AgentEvent{
-							Type:     AgentEventToolCall,
-							ToolName: event.Tool.Function.Name,
-							ToolArgs: event.Tool.Function.Arguments,
+							Type:       AgentEventToolCall,
+							ToolCallID: event.Tool.ID,
+							ToolName:   event.Tool.Function.Name,
+							ToolArgs:   event.Tool.Function.Arguments,
 						}
 					}
 
@@ -122,9 +123,10 @@ func RunLoop(
 				if reactCall, ok := parseReActToolCall(fullMsg.Content, turns); ok {
 					toolCalls = []llm.ToolCall{reactCall}
 					ch <- AgentEvent{
-						Type:     AgentEventToolCall,
-						ToolName: reactCall.Function.Name,
-						ToolArgs: reactCall.Function.Arguments,
+						Type:       AgentEventToolCall,
+						ToolCallID: reactCall.ID,
+						ToolName:   reactCall.Function.Name,
+						ToolArgs:   reactCall.Function.Arguments,
 					}
 				}
 			}
@@ -140,6 +142,7 @@ func RunLoop(
 				for _, res := range results {
 					ch <- AgentEvent{
 						Type:       AgentEventToolResult,
+						ToolCallID: res.toolCallID,
 						ToolName:   res.name,
 						ToolResult: res.result,
 					}

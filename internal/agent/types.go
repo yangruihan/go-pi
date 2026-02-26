@@ -24,11 +24,12 @@ const (
 // AgentEvent Agent 输出的事件
 type AgentEvent struct {
 	Type       AgentEventType
-	Delta      string         // 文本增量
-	ToolName   string         // 工具名称
-	ToolArgs   string         // 工具参数（JSON 字符串）
-	ToolResult string         // 工具执行结果
-	Message    *llm.Message   // 完整消息
+	Delta      string       // 文本增量
+	ToolCallID string       // 工具调用ID
+	ToolName   string       // 工具名称
+	ToolArgs   string       // 工具参数（JSON 字符串）
+	ToolResult string       // 工具执行结果
+	Message    *llm.Message // 完整消息
 	Err        error
 }
 
@@ -37,7 +38,7 @@ type AgentState int
 
 const (
 	AgentStateIdle      AgentState = iota
-	AgentStateStreaming             // 正在流式输出
+	AgentStateStreaming            // 正在流式输出
 	AgentStateToolExec             // 正在执行工具
 )
 
@@ -48,10 +49,10 @@ type ToolExecutor interface {
 
 // AgentLoopConfig Agent Loop 配置
 type AgentLoopConfig struct {
-	Model      string
-	Tools      []llm.Tool
-	MaxTurns   int // 最大轮次，0 表示不限制
-	SystemMsg  string
+	Model     string
+	Tools     []llm.Tool
+	MaxTurns  int // 最大轮次，0 表示不限制
+	SystemMsg string
 }
 
 // DefaultLoopConfig 返回默认配置
