@@ -382,7 +382,7 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeo
 		case agent.AgentEventStart, agent.AgentEventTurnStart:
 		default:
 			if indicator != nil {
-				indicator.Stop()
+				indicator.StopAndClearFast()
 			}
 		}
 		handleOutputEvent(event, renderer)
@@ -410,7 +410,7 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeo
 		case <-time.After(2 * time.Second):
 		}
 		if indicator != nil {
-			indicator.StopAndClear()
+			indicator.StopAndClearFast()
 		}
 		renderer.flush()
 		fmt.Println()
@@ -423,7 +423,7 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeo
 		}
 	}
 	if indicator != nil {
-		indicator.StopAndClear()
+		indicator.Stop()
 	}
 	renderer.flush()
 	fmt.Println()
@@ -433,6 +433,7 @@ type thinkingIndicator struct {
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 	stopped atomic.Bool
+	cleared atomic.Bool
 }
 
 func newThinkingIndicator() *thinkingIndicator {
@@ -459,17 +460,14 @@ func newThinkingIndicator() *thinkingIndicator {
 	return ti
 }
 
-func (ti *thinkingIndicator) StopAndClear() {
+func (ti *thinkingIndicator) StopAndClearFast() {
 	if ti == nil {
 		return
 	}
 	ti.Stop()
-	select {
-	case <-ti.doneCh:
-	default:
-		<-ti.doneCh
+	if ti.cleared.CompareAndSwap(false, true) {
+		fmt.Print("\r                \r")
 	}
-	fmt.Print("\r                \r")
 }
 
 func (ti *thinkingIndicator) Stop() {
