@@ -32,7 +32,19 @@ type Options struct {
 type Client struct {
 	sess     session.Session
 	bashTool *tools.BashTool
+	info     RuntimeInfo
 	mu       sync.Mutex
+}
+
+type RuntimeInfo struct {
+	Mode        string
+	Provider    string
+	Model       string
+	Host        string
+	APIBase     string
+	CWD         string
+	SessionID   string
+	ConfigPaths []string
 }
 
 func New(opts Options) (*Client, error) {
@@ -41,9 +53,10 @@ func New(opts Options) (*Client, error) {
 		cwd, _ = os.Getwd()
 	}
 
-	cfg, _, err := config.LoadWithSources(cwd)
+	cfg, sources, err := config.LoadWithSources(cwd)
 	if err != nil {
 		cfg = config.Default()
+		sources = config.LoadSources{}
 	}
 
 	if v := strings.TrimSpace(opts.Model); v != "" {
@@ -162,7 +175,18 @@ func New(opts Options) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{sess: sess, bashTool: bashTool}, nil
+	info := RuntimeInfo{
+		Mode:        "sdk",
+		Provider:    strings.TrimSpace(cfg.LLM.Provider),
+		Model:       strings.TrimSpace(cfg.Ollama.Model),
+		Host:        strings.TrimSpace(cfg.Ollama.Host),
+		APIBase:     strings.TrimSpace(cfg.LLM.BaseURL),
+		CWD:         cwd,
+		SessionID:   sess.SessionID(),
+		ConfigPaths: append([]string(nil), sources.ConfigPaths...),
+	}
+
+	return &Client{sess: sess, bashTool: bashTool, info: info}, nil
 }
 
 func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
@@ -218,6 +242,14 @@ func (c *Client) Close() error {
 		c.bashTool.Close()
 	}
 	return nil
+}
+
+func (c *Client) Info() RuntimeInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := c.info
+	out.ConfigPaths = append([]string(nil), c.info.ConfigPaths...)
+	return out
 }
 
 func buildSystemMessage(cfg config.Config, runMode string) string {
