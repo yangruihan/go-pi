@@ -21,10 +21,11 @@ const version = "0.1.0"
 func main() {
 	// 解析命令行参数
 	var (
-		model    = flag.String("m", "", "指定模型（默认使用配置文件中的模型）")
-		host     = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
-		noTools  = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
-		printVer = flag.Bool("version", false, "显示版本信息")
+		model     = flag.String("m", "", "指定模型（默认使用配置文件中的模型）")
+		modelLong = flag.String("model", "", "指定模型（默认使用配置文件中的模型）")
+		host      = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
+		noTools   = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
+		printVer  = flag.Bool("version", false, "显示版本信息")
 		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
 	)
 	flag.Parse()
@@ -41,8 +42,12 @@ func main() {
 	}
 
 	// 命令行参数覆盖配置
-	if *model != "" {
-		cfg.Ollama.Model = *model
+	selectedModel := *model
+	if *modelLong != "" {
+		selectedModel = *modelLong
+	}
+	if selectedModel != "" {
+		cfg.Ollama.Model = selectedModel
 	}
 	if *host != "" {
 		cfg.Ollama.Host = *host
