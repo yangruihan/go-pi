@@ -48,6 +48,7 @@ func main() {
 		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
 		tuiMode   = flag.Bool("tui", false, "启用 TUI 模式")
 		perfMode  = flag.Bool("perf", false, "运行 Phase4.2 性能测量")
+		noSpinner = flag.Bool("no-spinner", false, "禁用思考中加载动画")
 	)
 	flag.Parse()
 
@@ -242,7 +243,7 @@ func main() {
 	}
 
 	// 交互式模式
-	runInteractive(ctx, sess, cfg, manager, bashTool, loadSources)
+	runInteractive(ctx, sess, cfg, manager, bashTool, loadSources, *noSpinner)
 }
 
 // buildSystemMessage 构建系统提示词
@@ -265,7 +266,7 @@ func getOS() string {
 }
 
 // runInteractive 运行交互式 CLI
-func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager, bashTool *tools.BashTool, sources config.LoadSources) {
+func runInteractive(ctx context.Context, sess session.Session, cfg config.Config, manager *session.SessionManager, bashTool *tools.BashTool, sources config.LoadSources, noSpinner bool) {
 	// 设置信号处理
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -326,7 +327,7 @@ func runInteractive(ctx context.Context, sess session.Session, cfg config.Config
 		}
 
 		// 发送给 Agent
-		runAgentTurn(ctx, sess, input, cfg.Ollama.Timeout)
+		runAgentTurn(ctx, sess, input, cfg.Ollama.Timeout, noSpinner)
 	}
 }
 
@@ -370,14 +371,19 @@ func printPerfReport(r perf.Report) {
 }
 
 // runAgentTurn 执行一次 Agent 对话轮次
-func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeout time.Duration) {
+func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeout time.Duration, noSpinner bool) {
 	renderer := &cliOutputRenderer{}
-	indicator := newThinkingIndicator()
+	var indicator *thinkingIndicator
+	if !noSpinner {
+		indicator = newThinkingIndicator()
+	}
 	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
 		switch event.Type {
 		case agent.AgentEventStart, agent.AgentEventTurnStart:
 		default:
-			indicator.Stop()
+			if indicator != nil {
+				indicator.Stop()
+			}
 		}
 		handleOutputEvent(event, renderer)
 	})
@@ -403,7 +409,9 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeo
 		case <-done:
 		case <-time.After(2 * time.Second):
 		}
-		indicator.StopAndClear()
+		if indicator != nil {
+			indicator.StopAndClear()
+		}
 		renderer.flush()
 		fmt.Println()
 		return
@@ -414,7 +422,9 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string, timeo
 			fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", err)
 		}
 	}
-	indicator.StopAndClear()
+	if indicator != nil {
+		indicator.StopAndClear()
+	}
 	renderer.flush()
 	fmt.Println()
 }
