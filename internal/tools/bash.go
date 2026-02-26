@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coderyrh/gopi/internal/llm"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 const (
@@ -162,13 +164,15 @@ func (b *BashTool) runCommand(ctx context.Context, command string) (string, erro
 
 	err := cmd.Run()
 
-	combined := outBuf.String()
+	combinedBytes := append([]byte{}, outBuf.Bytes()...)
 	if errBuf.Len() > 0 {
-		if combined != "" {
-			combined += "\n"
+		if len(combinedBytes) > 0 {
+			combinedBytes = append(combinedBytes, '\n')
 		}
-		combined += errBuf.String()
+		combinedBytes = append(combinedBytes, errBuf.Bytes()...)
 	}
+
+	combined := normalizeShellOutput(combinedBytes)
 
 	// 截断超长输出
 	if len(combined) > BashOutputMaxBytes {
@@ -187,6 +191,27 @@ func (b *BashTool) runCommand(ctx context.Context, command string) (string, erro
 	}
 
 	return combined, nil
+}
+
+func normalizeShellOutput(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	if !isWindows() {
+		return string(raw)
+	}
+
+	if utf8.Valid(raw) {
+		return string(raw)
+	}
+
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(raw)
+	if err == nil && utf8.Valid(decoded) {
+		return string(decoded)
+	}
+
+	return string(raw)
 }
 
 // Close 关闭持久化 shell 进程
