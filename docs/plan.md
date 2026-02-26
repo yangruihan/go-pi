@@ -212,26 +212,26 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 
 ---
 
-## Phase 3 — TUI 完整实现
+## Phase 3 — TUI 完整实现 ✅ 已完成
 
 **目标**：好看、好用的终端界面。
 
 ### 3.1 Bubbletea 主框架 (`internal/tui/app.go`)
 
 **任务清单：**
-- [ ] `AppModel` 主 Model（Bubbletea 架构）
-- [ ] 消息列表组件 `messages.go`（滚动、自动滚到底部）
-- [ ] 多行输入框 `editor.go`（Shift+Enter 换行，Enter 发送，↑↓ 历史）
-- [ ] 状态栏 `footer.go`（模型名、Token 计数、流式状态指示）
+- [x] `AppModel` 主 Model（Bubbletea 架构）
+- [x] 消息列表组件 `messages.go`（滚动、自动滚到底部）
+- [x] 多行输入框 `editor.go`（Shift+Enter 换行，Enter 发送，↑↓ 历史）
+- [x] 状态栏 `footer.go`（模型名、Token 计数、流式状态指示）
 
 ### 3.2 渲染组件
 
 **任务清单：**
-- [ ] Markdown 渲染（glamour）：代码块高亮、表格、列表
-- [ ] 工具执行面板：显示工具名 + 参数 + 实时输出（折叠/展开）
-- [ ] 流式 delta 渲染：增量更新，不全量重绘
-- [ ] 压缩状态提示：`[正在压缩上下文，请稍候...]`
-- [ ] 错误消息渲染（红色，有重试提示）
+- [x] Markdown 渲染（glamour）：代码块高亮、表格、列表
+- [x] 工具执行面板：显示工具名 + 参数 + 实时输出（折叠/展开）
+- [x] 流式 delta 渲染：增量更新，不全量重绘
+- [x] 压缩状态提示：`[正在压缩上下文，请稍候...]`
+- [x] 错误消息渲染（红色，有重试提示）
 
 ### 3.3 快捷键设计
 
@@ -249,11 +249,11 @@ echo "写一个冒泡排序" | ./build/gopi.exe --print  # 管道模式
 
 ### 3.4 图片支持
 
-- [ ] 检测终端是否支持 Kitty 图片协议
-- [ ] 支持文件路径 `@image.png` 语法附带图片（需要多模态模型）
-- [ ] 优雅降级：不支持时显示路径文本
+- [x] 检测终端是否支持 Kitty 图片协议
+- [x] 支持文件路径 `@image.png` 语法附带图片（需要多模态模型）
+- [x] 优雅降级：不支持时显示路径文本
 
-**Phase 3 完成标志：** 有完整美观的 TUI，用户体验接近 pi coding-agent。
+**Phase 3 完成标志：** ✅ 已达成：TUI 主框架、渲染组件、快捷键、图片附带与降级能力均已可用。
 
 ---
 
@@ -391,7 +391,7 @@ Step 6: internal/tools/ 其余工具（read/write/edit/grep/find/ls） ✅ 完�
 Step 7: internal/session/ → 持久化 + 压缩                 ✅ 完成
 Step 8: internal/session/ → AgentSession 业务层 + Slash 命令 ✅ 完成
           ⬆ Phase 2 完成，完整 CLI 可用
-Step 9: internal/tui/ → Bubbletea TUI
+Step 9: internal/tui/ → Bubbletea TUI                      ✅ 完成
 Step 10: 稳定性、性能优化
 ```
 

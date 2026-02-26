@@ -15,6 +15,7 @@ import (
 	"github.com/coderyrh/gopi/internal/llm"
 	"github.com/coderyrh/gopi/internal/session"
 	"github.com/coderyrh/gopi/internal/tools"
+	gotui "github.com/coderyrh/gopi/internal/tui"
 )
 
 const version = "0.1.0"
@@ -32,6 +33,7 @@ func main() {
 		sessionLong = flag.String("session", "", "打开指定会话 ID")
 		printVer  = flag.Bool("version", false, "显示版本信息")
 		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
+		tuiMode   = flag.Bool("tui", false, "启用 TUI 模式")
 	)
 	flag.Parse()
 
@@ -116,6 +118,13 @@ func main() {
 
 	if *printMode {
 		runPrintMode(ctx, sess)
+		return
+	}
+
+	if *tuiMode {
+		if err := gotui.Run(sess, cfg); err != nil {
+			fatal("启动 TUI 失败: %v", err)
+		}
 		return
 	}
 

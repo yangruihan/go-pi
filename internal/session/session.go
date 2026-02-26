@@ -31,10 +31,23 @@ type Session interface {
 	Save() error
 	SessionFile() string
 	SessionID() string
+	ListSessions() ([]SessionMeta, error)
+	SwitchSession(id string) error
 }
 
 type PromptOpt func(*promptOptions)
-type promptOptions struct{}
+type promptOptions struct {
+	images []string
+}
+
+func WithImages(paths []string) PromptOpt {
+	return func(o *promptOptions) {
+		if o == nil {
+			return
+		}
+		o.images = append(o.images, paths...)
+	}
+}
 
 type AgentSession struct {
 	mu         sync.Mutex
@@ -95,9 +108,16 @@ func NewAgentSession(
 	return s, nil
 }
 
-func (s *AgentSession) Prompt(text string, _ ...PromptOpt) error {
+func (s *AgentSession) Prompt(text string, opts ...PromptOpt) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("prompt cannot be empty")
+	}
+
+	po := &promptOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(po)
+		}
 	}
 
 	s.mu.Lock()
@@ -111,9 +131,9 @@ func (s *AgentSession) Prompt(text string, _ ...PromptOpt) error {
 
 	working := make([]llm.Message, len(s.messages), len(s.messages)+4)
 	copy(working, s.messages)
-	userMsg := llm.Message{Role: "user", Content: text}
+	userMsg := llm.Message{Role: "user", Content: text, Images: po.images}
 	working = append(working, userMsg)
-	_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: userMsg.Role, Content: userMsg.Content, Timestamp: time.Now().UTC().Format(time.RFC3339)})
+	_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: userMsg.Role, Content: userMsg.Content, Images: userMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
 
 	model := s.model
 	s.mu.Unlock()
@@ -143,13 +163,13 @@ func (s *AgentSession) Prompt(text string, _ ...PromptOpt) error {
 		case agent.AgentEventToolResult:
 			toolMsg := llm.Message{Role: "tool", Content: ev.ToolResult}
 			working = append(working, toolMsg)
-			_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: toolMsg.Role, Content: toolMsg.Content, Timestamp: time.Now().UTC().Format(time.RFC3339)})
+			_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: toolMsg.Role, Content: toolMsg.Content, Images: toolMsg.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
 		case agent.AgentEventTurnEnd:
 			assistantText := strings.TrimSpace(turnBuilder.String())
 			if assistantText != "" {
 				assistant := llm.Message{Role: "assistant", Content: assistantText}
 				working = append(working, assistant)
-				_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: assistant.Role, Content: assistant.Content, Timestamp: time.Now().UTC().Format(time.RFC3339)})
+				_ = appendJSONL(s.sessionFile, messageEntry{Type: entryMessage, Role: assistant.Role, Content: assistant.Content, Images: assistant.Images, Timestamp: time.Now().UTC().Format(time.RFC3339)})
 			}
 			turnBuilder.Reset()
 		case agent.AgentEventError:
@@ -243,6 +263,32 @@ func (s *AgentSession) SessionID() string {
 	return s.sessionID
 }
 
+func (s *AgentSession) ListSessions() ([]SessionMeta, error) {
+	return s.manager.List(s.cwd)
+}
+
+func (s *AgentSession) SwitchSession(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("session id cannot be empty")
+	}
+	loaded, err := s.manager.LoadByID(s.cwd, id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streaming {
+		return fmt.Errorf("cannot switch session while streaming")
+	}
+	s.sessionID = loaded.ID
+	s.sessionFile = loaded.FilePath
+	s.messages = append([]llm.Message{}, loaded.Messages...)
+	if strings.TrimSpace(loaded.Model) != "" {
+		s.model = loaded.Model
+	}
+	return nil
+}
+
 func (s *AgentSession) finishStreaming() {
 	s.mu.Lock()
 	s.streaming = false
@@ -264,10 +310,13 @@ func (s *AgentSession) tryCompact() error {
 		return nil
 	}
 
+	s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventToolCall, ToolName: "context_compaction", ToolArgs: fmt.Sprintf("{" + "\"before\":%d" + "}", s.estimator.EstimateMessages(messages))})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	res, err := CompactMessages(ctx, s.client, model, messages, keepRecent, s.estimator)
 	if err != nil || res == nil {
+		s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventError, Err: err})
 		return err
 	}
 
@@ -276,7 +325,11 @@ func (s *AgentSession) tryCompact() error {
 	file := s.sessionFile
 	s.mu.Unlock()
 
-	return appendJSONL(file, compactionEntry{
+	if err := appendJSONL(file, compactionEntry{
 		Type: entryCompaction, Summary: res.Summary, TokenBefore: res.TokenBefore, TokenAfter: res.TokenAfter, Timestamp: time.Now().UTC().Format(time.RFC3339),
-	})
+	}); err != nil {
+		return err
+	}
+	s.bus.Publish(agent.AgentEvent{Type: agent.AgentEventToolResult, ToolName: "context_compaction", ToolResult: fmt.Sprintf("压缩完成：%d -> %d tokens", res.TokenBefore, res.TokenAfter)})
+	return nil
 }

@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	ollamaapi "github.com/ollama/ollama/api"
 )
@@ -45,8 +46,12 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest) (<-chan Event, erro
 			// 处理工具调用
 			for _, tc := range resp.Message.ToolCalls {
 				argBytes, _ := json.Marshal(tc.Function.Arguments)
+				callID := tc.ID
+				if callID == "" {
+					callID = tc.Function.Name
+				}
 				call := ToolCall{
-					ID:   tc.Function.Name,
+					ID:   callID,
 					Type: "function",
 					Function: ToolCallFunction{
 						Name:      tc.Function.Name,
@@ -92,6 +97,18 @@ func convertMessages(msgs []Message) []ollamaapi.Message {
 		om := ollamaapi.Message{
 			Role:    m.Role,
 			Content: m.Content,
+		}
+		if len(m.Images) > 0 {
+			for _, p := range m.Images {
+				if p == "" {
+					continue
+				}
+				b, err := os.ReadFile(p)
+				if err != nil {
+					continue
+				}
+				om.Images = append(om.Images, ollamaapi.ImageData(b))
+			}
 		}
 		// 将工具调用结果（role=tool）作为内容传递
 		out = append(out, om)

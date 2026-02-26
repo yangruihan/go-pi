@@ -35,6 +35,7 @@ type messageEntry struct {
 	Type       entryType       `json:"type"`
 	Role       string          `json:"role"`
 	Content    string          `json:"content,omitempty"`
+	Images     []string        `json:"images,omitempty"`
 	ToolCalls  []llm.ToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 	Timestamp  string          `json:"timestamp"`
@@ -196,7 +197,7 @@ func (m *SessionManager) Load(filePath string) (*LoadedSession, error) {
 		case entryMessage:
 			var v messageEntry
 			if json.Unmarshal(line, &v) == nil {
-				out.Messages = append(out.Messages, llm.Message{Role: v.Role, Content: v.Content, ToolCalls: v.ToolCalls, ToolCallID: v.ToolCallID})
+				out.Messages = append(out.Messages, llm.Message{Role: v.Role, Content: v.Content, Images: v.Images, ToolCalls: v.ToolCalls, ToolCallID: v.ToolCallID})
 			}
 		}
 	}
