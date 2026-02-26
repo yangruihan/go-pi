@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // AgentEventType Agent 事件类型

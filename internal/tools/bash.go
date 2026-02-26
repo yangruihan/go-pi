@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 

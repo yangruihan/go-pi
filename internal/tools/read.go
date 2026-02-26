@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 const FileReadMaxLines = 500

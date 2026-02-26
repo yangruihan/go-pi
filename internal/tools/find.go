@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // FindArgs 文件查找参数

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // LSArgs 列目录参数

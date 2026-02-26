@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // Tool 定义工具接口

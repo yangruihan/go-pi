@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/coderyrh/gopi/internal/config"
-	"github.com/coderyrh/gopi/internal/llm"
-	"github.com/coderyrh/gopi/internal/session"
-	"github.com/coderyrh/gopi/internal/tui"
+	"github.com/yangruihan/go-pi/internal/config"
+	"github.com/yangruihan/go-pi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/session"
+	"github.com/yangruihan/go-pi/internal/tui"
 )
 
 type Report struct {

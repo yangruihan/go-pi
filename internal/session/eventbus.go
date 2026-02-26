@@ -3,7 +3,7 @@ package session
 import (
 	"sync"
 
-	"github.com/coderyrh/gopi/internal/agent"
+	"github.com/yangruihan/go-pi/internal/agent"
 )
 
 // EventListener 会话事件监听函数

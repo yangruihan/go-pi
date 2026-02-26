@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/coderyrh/gopi/internal/config"
-	"github.com/coderyrh/gopi/internal/llm"
-	"github.com/coderyrh/gopi/internal/tools"
+	"github.com/yangruihan/go-pi/internal/config"
+	"github.com/yangruihan/go-pi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

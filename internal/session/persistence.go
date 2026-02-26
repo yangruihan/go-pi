@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 type entryType string

@@ -8,13 +8,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/coderyrh/gopi/internal/agent"
-	"github.com/coderyrh/gopi/internal/config"
-	"github.com/coderyrh/gopi/internal/llm"
-	"github.com/coderyrh/gopi/internal/prompt"
-	"github.com/coderyrh/gopi/internal/session"
-	"github.com/coderyrh/gopi/internal/skills"
-	"github.com/coderyrh/gopi/internal/tools"
+	"github.com/yangruihan/go-pi/internal/agent"
+	"github.com/yangruihan/go-pi/internal/config"
+	"github.com/yangruihan/go-pi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/prompt"
+	"github.com/yangruihan/go-pi/internal/session"
+	"github.com/yangruihan/go-pi/internal/skills"
+	"github.com/yangruihan/go-pi/internal/tools"
 )
 
 type Options struct {

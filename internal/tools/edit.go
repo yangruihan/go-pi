@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // EditArgs 精确替换参数

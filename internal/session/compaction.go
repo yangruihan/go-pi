@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/coderyrh/gopi/internal/agent"
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/agent"
+	"github.com/yangruihan/go-pi/internal/llm"
 	tiktoken "github.com/pkoukk/tiktoken-go"
 )
 

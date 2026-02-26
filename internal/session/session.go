@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coderyrh/gopi/internal/agent"
-	"github.com/coderyrh/gopi/internal/config"
-	"github.com/coderyrh/gopi/internal/extensions"
-	"github.com/coderyrh/gopi/internal/llm"
-	"github.com/coderyrh/gopi/internal/tools"
+	"github.com/yangruihan/go-pi/internal/agent"
+	"github.com/yangruihan/go-pi/internal/config"
+	"github.com/yangruihan/go-pi/internal/extensions"
+	"github.com/yangruihan/go-pi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/tools"
 )
 
 // Session 对外会话接口

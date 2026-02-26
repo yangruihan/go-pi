@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 )
 
 // LLMClient LLM 客户端接口（方便测试时 mock）

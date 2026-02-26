@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coderyrh/gopi/internal/llm"
+	"github.com/yangruihan/go-pi/internal/llm"
 	"gopkg.in/yaml.v3"
 )
 

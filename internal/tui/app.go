@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/coderyrh/gopi/internal/agent"
-	"github.com/coderyrh/gopi/internal/config"
-	"github.com/coderyrh/gopi/internal/session"
-	"github.com/coderyrh/gopi/internal/skills"
+	"github.com/yangruihan/go-pi/internal/agent"
+	"github.com/yangruihan/go-pi/internal/config"
+	"github.com/yangruihan/go-pi/internal/session"
+	"github.com/yangruihan/go-pi/internal/skills"
 	"golang.org/x/term"
 )
 
