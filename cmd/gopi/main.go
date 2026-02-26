@@ -33,22 +33,22 @@ var modelProfiles []config.ModelProfile
 func main() {
 	// 解析命令行参数
 	var (
-		model     = flag.String("m", "", "指定模型（默认使用配置文件中的模型）")
-		modelLong = flag.String("model", "", "指定模型（默认使用配置文件中的模型）")
-		host      = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
-		provider  = flag.String("provider", "", "LLM 后端：ollama|openai")
-		apiBase   = flag.String("api-base", "", "OpenAI 兼容后端 base url（如 https://api.deepseek.com）")
-		apiKey    = flag.String("api-key", "", "OpenAI 兼容后端 API Key")
-		noTools   = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
-		cont      = flag.Bool("c", false, "继续最近一次会话")
-		contLong  = flag.Bool("continue", false, "继续最近一次会话")
-		sessionID = flag.String("s", "", "打开指定会话 ID")
+		model       = flag.String("m", "", "指定模型（默认使用配置文件中的模型）")
+		modelLong   = flag.String("model", "", "指定模型（默认使用配置文件中的模型）")
+		host        = flag.String("host", "", "Ollama 主机地址（默认 http://localhost:11434）")
+		provider    = flag.String("provider", "", "LLM 后端：ollama|openai")
+		apiBase     = flag.String("api-base", "", "OpenAI 兼容后端 base url（如 https://api.deepseek.com）")
+		apiKey      = flag.String("api-key", "", "OpenAI 兼容后端 API Key")
+		noTools     = flag.Bool("no-tools", false, "禁用工具，纯对话模式")
+		cont        = flag.Bool("c", false, "继续最近一次会话")
+		contLong    = flag.Bool("continue", false, "继续最近一次会话")
+		sessionID   = flag.String("s", "", "打开指定会话 ID")
 		sessionLong = flag.String("session", "", "打开指定会话 ID")
-		printVer  = flag.Bool("version", false, "显示版本信息")
-		printMode = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
-		tuiMode   = flag.Bool("tui", false, "启用 TUI 模式")
-		perfMode  = flag.Bool("perf", false, "运行 Phase4.2 性能测量")
-		noSpinner = flag.Bool("no-spinner", false, "禁用思考中加载动画")
+		printVer    = flag.Bool("version", false, "显示版本信息")
+		printMode   = flag.Bool("print", false, "非交互模式，从 stdin 读取，输出到 stdout")
+		tuiMode     = flag.Bool("tui", false, "启用 TUI 模式")
+		perfMode    = flag.Bool("perf", false, "运行 Phase4.2 性能测量")
+		noSpinner   = flag.Bool("no-spinner", false, "禁用思考中加载动画")
 	)
 	flag.Parse()
 
@@ -109,8 +109,8 @@ func main() {
 
 	// 创建 LLM 客户端
 	var (
-		chatClient agent.LLMClient
-		pingErr    error
+		chatClient   agent.LLMClient
+		pingErr      error
 		ollamaClient *llm.Client
 	)
 	ctx := context.Background()

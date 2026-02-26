@@ -18,15 +18,15 @@ import (
 )
 
 type Options struct {
-	CWD            string
-	Model          string
-	Provider       string
-	Host           string
-	APIBase        string
-	APIKey         string
-	NoTools        bool
-	ContinueLatest bool
-	SessionID      string
+	CWD               string
+	Model             string
+	Provider          string
+	Host              string
+	APIBase           string
+	APIKey            string
+	NoTools           bool
+	ContinueLatest    bool
+	SessionID         string
 	PreferConfigModel bool
 }
 
@@ -38,16 +38,16 @@ type Client struct {
 }
 
 type RuntimeInfo struct {
-	Mode        string
-	Provider    string
-	Model       string
-	ConfigModel string
+	Mode         string
+	Provider     string
+	Model        string
+	ConfigModel  string
 	SessionModel string
-	Host        string
-	APIBase     string
-	CWD         string
-	SessionID   string
-	ConfigPaths []string
+	Host         string
+	APIBase      string
+	CWD          string
+	SessionID    string
+	ConfigPaths  []string
 }
 
 func New(opts Options) (*Client, error) {
@@ -187,16 +187,16 @@ func New(opts Options) (*Client, error) {
 	}
 
 	info := RuntimeInfo{
-		Mode:        "sdk",
-		Provider:    strings.TrimSpace(cfg.LLM.Provider),
-		ConfigModel: strings.TrimSpace(cfg.Ollama.Model),
+		Mode:         "sdk",
+		Provider:     strings.TrimSpace(cfg.LLM.Provider),
+		ConfigModel:  strings.TrimSpace(cfg.Ollama.Model),
 		SessionModel: strings.TrimSpace(sess.Model()),
-		Model:       strings.TrimSpace(sess.Model()),
-		Host:        strings.TrimSpace(cfg.Ollama.Host),
-		APIBase:     strings.TrimSpace(cfg.LLM.BaseURL),
-		CWD:         cwd,
-		SessionID:   sess.SessionID(),
-		ConfigPaths: append([]string(nil), sources.ConfigPaths...),
+		Model:        strings.TrimSpace(sess.Model()),
+		Host:         strings.TrimSpace(cfg.Ollama.Host),
+		APIBase:      strings.TrimSpace(cfg.LLM.BaseURL),
+		CWD:          cwd,
+		SessionID:    sess.SessionID(),
+		ConfigPaths:  append([]string(nil), sources.ConfigPaths...),
 	}
 
 	return &Client{sess: sess, bashTool: bashTool, info: info}, nil
