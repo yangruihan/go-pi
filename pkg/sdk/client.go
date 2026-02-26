@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yangruihan/go-pi/internal/agent"
 	"github.com/yangruihan/go-pi/internal/config"
@@ -240,7 +241,11 @@ func (c *Client) Ask(ctx context.Context, promptText string) (string, error) {
 		return strings.TrimSpace(b.String()), nil
 	case <-ctx.Done():
 		c.sess.Abort()
-		go func() { <-done }()
+		select {
+		case <-done:
+		case <-time.After(1200 * time.Millisecond):
+			go func() { <-done }()
+		}
 		return "", ctx.Err()
 	}
 }
