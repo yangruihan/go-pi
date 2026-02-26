@@ -12,6 +12,27 @@
 
 ## 建议使用方式
 
+### 一键初始化（Windows PowerShell）
+
+```powershell
+.\config\init.ps1
+```
+
+可选参数：
+
+```powershell
+# 覆盖已存在文件
+.\config\init.ps1 -Force
+
+# 指定目标目录
+.\config\init.ps1 -TargetDir "D:\my-gopi-config"
+
+# 同时在当前项目根目录生成 AGENT.md
+.\config\init.ps1 -InitProjectAgent
+```
+
+---
+
 1. 复制模板到用户目录：
    - `~/.gopi/config.yaml`
    - `~/.gopi/models.yaml`
