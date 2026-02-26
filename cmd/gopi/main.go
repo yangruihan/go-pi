@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -371,7 +372,13 @@ func printPerfReport(r perf.Report) {
 // runAgentTurn 执行一次 Agent 对话轮次
 func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 	renderer := &cliOutputRenderer{}
+	indicator := newThinkingIndicator()
 	unsubscribe := sess.Subscribe(func(event agent.AgentEvent) {
+		switch event.Type {
+		case agent.AgentEventStart, agent.AgentEventTurnStart:
+		default:
+			indicator.StopAndClear()
+		}
 		handleOutputEvent(event, renderer)
 	})
 	defer unsubscribe()
@@ -382,8 +389,51 @@ func runAgentTurn(_ context.Context, sess session.Session, userMsg string) {
 			fmt.Fprintf(os.Stderr, "\n[错误]: %v\n", err)
 		}
 	}
+	indicator.StopAndClear()
 	renderer.flush()
 	fmt.Println()
+}
+
+type thinkingIndicator struct {
+	stopCh  chan struct{}
+	doneCh  chan struct{}
+	stopped atomic.Bool
+}
+
+func newThinkingIndicator() *thinkingIndicator {
+	ti := &thinkingIndicator{
+		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
+	}
+	go func() {
+		defer close(ti.doneCh)
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		ticker := time.NewTicker(120 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ti.stopCh:
+				return
+			case <-ticker.C:
+				fmt.Printf("\r[%s] 思考中...", frames[i%len(frames)])
+				i++
+			}
+		}
+	}()
+	return ti
+}
+
+func (ti *thinkingIndicator) StopAndClear() {
+	if ti == nil {
+		return
+	}
+	if !ti.stopped.CompareAndSwap(false, true) {
+		return
+	}
+	close(ti.stopCh)
+	<-ti.doneCh
+	fmt.Print("\r                \r")
 }
 
 // handleSlashCommand 处理 slash 命令，返回是否已处理
