@@ -71,6 +71,12 @@ gopi 读取用户目录配置：
 - `~/.gopi/tools.yaml`
 - `~/.gopi/prompt.md`
 
+项目级配置（按目录优先顺序覆盖用户级）：
+
+- `<project>/.gopi/config.yaml`、`<project>/.gopi/models.yaml`
+- `<project>/.claude/config.yaml`、`<project>/.claude/models.yaml`
+- `<project>/.pi/config.yaml`、`<project>/.pi/models.yaml`
+
 项目目录规则文件：
 
 - `<project>/AGENT.md`

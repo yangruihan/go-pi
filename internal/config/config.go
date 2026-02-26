@@ -12,12 +12,12 @@ import (
 
 // Config 全局配置
 type Config struct {
-	Ollama  OllamaConfig  `yaml:"ollama"`
-	LLM     LLMConfig     `yaml:"llm"`
-	Context ContextConfig `yaml:"context"`
-	Tools   ToolsConfig   `yaml:"tools"`
-	TUI     TUIConfig     `yaml:"tui"`
-	Prompt  PromptConfig  `yaml:"prompt"`
+	Ollama  OllamaConfig     `yaml:"ollama"`
+	LLM     LLMConfig        `yaml:"llm"`
+	Context ContextConfig    `yaml:"context"`
+	Tools   ToolsConfig      `yaml:"tools"`
+	TUI     TUIConfig        `yaml:"tui"`
+	Prompt  PromptConfig     `yaml:"prompt"`
 	Ext     ExtensionsConfig `yaml:"extensions"`
 }
 
@@ -43,9 +43,9 @@ type OllamaConfig struct {
 
 // ContextConfig 上下文配置
 type ContextConfig struct {
-	MaxTokens            int     `yaml:"max_tokens"`
-	CompactionThreshold  float64 `yaml:"compaction_threshold"`
-	KeepRecent           int     `yaml:"keep_recent"`
+	MaxTokens           int     `yaml:"max_tokens"`
+	CompactionThreshold float64 `yaml:"compaction_threshold"`
+	KeepRecent          int     `yaml:"keep_recent"`
 }
 
 // ToolsConfig 工具配置
@@ -65,9 +65,9 @@ type TUIConfig struct {
 
 // ExtensionsConfig 扩展配置
 type ExtensionsConfig struct {
-	ToolFiles   []string `yaml:"tool_files"`
-	BeforePrompt string  `yaml:"before_prompt"`
-	AfterResponse string `yaml:"after_response"`
+	ToolFiles     []string `yaml:"tool_files"`
+	BeforePrompt  string   `yaml:"before_prompt"`
+	AfterResponse string   `yaml:"after_response"`
 }
 
 // LoadSources 记录配置加载来源
@@ -75,6 +75,8 @@ type LoadSources struct {
 	ConfigPaths []string
 	ModelPaths  []string
 }
+
+var projectAIDirs = []string{".gopi", ".claude", ".pi"}
 
 // Default 返回默认配置
 func Default() Config {
@@ -110,8 +112,8 @@ func Default() Config {
 			TemplateFile: "",
 		},
 		Ext: ExtensionsConfig{
-			ToolFiles:    nil,
-			BeforePrompt: "",
+			ToolFiles:     nil,
+			BeforePrompt:  "",
 			AfterResponse: "",
 		},
 	}
@@ -140,10 +142,11 @@ func ProjectConfigPaths(cwd string) []string {
 	if cwd == "" {
 		return nil
 	}
-	return []string{
-		filepath.Join(cwd, ".gopi", "config.yaml"),
-		filepath.Join(cwd, "config.yaml"),
+	paths := make([]string, 0, len(projectAIDirs))
+	for _, dir := range projectAIDirs {
+		paths = append(paths, filepath.Join(cwd, dir, "config.yaml"))
 	}
+	return paths
 }
 
 // Load 从默认路径加载配置文件

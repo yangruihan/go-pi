@@ -55,10 +55,11 @@ func ProjectModelsFiles(cwd string) []string {
 	if cwd == "" {
 		return nil
 	}
-	return []string{
-		filepath.Join(cwd, ".gopi", "models.yaml"),
-		filepath.Join(cwd, "models.yaml"),
+	paths := make([]string, 0, len(projectAIDirs))
+	for _, dir := range projectAIDirs {
+		paths = append(paths, filepath.Join(cwd, dir, "models.yaml"))
 	}
+	return paths
 }
 
 func LoadModelProfiles(path string) ([]ModelProfile, error) {
