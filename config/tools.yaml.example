@@ -1,0 +1,18 @@
+# 复制到 ~/.gopi/tools.yaml
+# 在 config.yaml 的 extensions.tool_files 中引用
+
+tools:
+  - name: quick_git_status
+    description: 查看当前仓库 git 状态
+    command: "git status --short"
+    timeout_sec: 15
+
+  - name: run_go_fmt
+    description: 对输入的文件执行 gofmt
+    command: "gofmt -w {{input}}"
+    timeout_sec: 15
+
+  - name: list_large_files
+    description: 列出当前目录下大于 5MB 的文件
+    command: "powershell -NoProfile -Command \"Get-ChildItem -Recurse -File | Where-Object { $_.Length -gt 5MB } | Select-Object -ExpandProperty FullName\""
+    timeout_sec: 20

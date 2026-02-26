@@ -1,0 +1,43 @@
+# 复制到 ~/.gopi/config.yaml
+
+ollama:
+  host: "http://localhost:11434"
+  model: "qwen2.5-coder:7b"
+  timeout: 120s
+  tool_calling: auto
+
+llm:
+  # 可选: ollama | openai
+  provider: "ollama"
+  # provider=openai 时建议设置
+  base_url: ""
+  api_key: ""
+
+context:
+  max_tokens: 32768
+  compaction_threshold: 0.60
+  keep_recent: 8
+
+tools:
+  bash_timeout: 30s
+  bash_max_output: 8192
+  read_max_lines: 500
+  grep_max_matches: 50
+
+tui:
+  theme: "dark"
+  show_token_count: true
+  quiet_startup: false
+
+prompt:
+  # 留空则使用内置提示词，填写后读取外部模板文件
+  template_file: "~/.gopi/prompt.md"
+
+extensions:
+  # 自定义工具 YAML 文件列表（可选）
+  tool_files:
+    - "~/.gopi/tools.yaml"
+  # prompt 前 hook，可读取 stdin 并输出处理后的内容
+  before_prompt: ""
+  # 回答后 hook，可读取 assistant 文本
+  after_response: ""

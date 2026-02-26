@@ -1,0 +1,25 @@
+# 复制到 ~/.gopi/models.yaml
+# 通过 /model <name> 使用别名切换
+
+models:
+  - name: qwen3
+    provider: ollama
+    model: qwen3:8b
+    base_url: http://localhost:11434
+
+  - name: coder
+    provider: ollama
+    model: qwen2.5-coder:7b
+    base_url: http://localhost:11434
+
+  - name: deepseek
+    provider: openai
+    model: deepseek-chat
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+
+  - name: glm
+    provider: openai
+    model: glm-4.5
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: ZHIPUAI_API_KEY
