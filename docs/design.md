@@ -342,6 +342,10 @@ tui:
   theme: "dark"                 # dark | light | system
   show_token_count: true
   quiet_startup: false
+
+# 提示词模板（可选）
+prompt:
+  template_file: "~/.gopi/prompt.md"   # 支持 {{BASE_PROMPT}} / {{AGENT_MD}}
 ```
 
 ---

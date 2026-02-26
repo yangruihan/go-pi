@@ -18,6 +18,7 @@ import (
 	"github.com/coderyrh/gopi/internal/extensions"
 	"github.com/coderyrh/gopi/internal/llm"
 	"github.com/coderyrh/gopi/internal/perf"
+	"github.com/coderyrh/gopi/internal/prompt"
 	"github.com/coderyrh/gopi/internal/session"
 	"github.com/coderyrh/gopi/internal/skills"
 	"github.com/coderyrh/gopi/internal/tools"
@@ -209,7 +210,15 @@ func main() {
 		}
 	}
 
-	sess, err := session.NewAgentSession(cfg, chatClient, registry, manager, loaded, buildSystemMessage())
+	runMode := "cli"
+	if *printMode {
+		runMode = "print"
+	}
+	if *tuiMode {
+		runMode = "tui"
+	}
+
+	sess, err := session.NewAgentSession(cfg, chatClient, registry, manager, loaded, buildSystemMessage(cfg, runMode))
 	if err != nil {
 		fatal("创建会话失败: %v", err)
 	}
@@ -233,35 +242,11 @@ func main() {
 }
 
 // buildSystemMessage 构建系统提示词
-func buildSystemMessage() string {
+func buildSystemMessage(cfg config.Config, runMode string) string {
 	cwd, _ := os.Getwd()
-	base := fmt.Sprintf(`你是 Gopi，一个运行在本地的 AI 编程助手。
-
-当前工作目录: %s
-操作系统: %s
-
-你有以下工具可以使用:
-- bash: 执行 shell 命令
-- read_file / write_file / edit_file: 读写与精确编辑文件
-- grep_search / find_files / list_dir: 搜索与文件遍历
-
-行为规范:
-1. 先理解任务再执行；信息不足时先读取相关文件，不凭空猜测。
-2. 优先做最小可行改动，保持与现有代码风格一致，避免无关重构。
-3. 涉及删除、覆盖、批量改动或可能破坏环境的操作，先明确风险并征求确认。
-4. 输出简洁直接：先给结果，再给关键依据和下一步。
-5. 默认中文回复（除非用户要求英文）。
-
-工程流程:
-1. 改代码后优先运行相关测试/构建验证，再给结论。
-2. 若发现错误，先定位根因并修复；不要用表面规避方案。
-3. 未经用户明确要求，不执行 git commit / push / 分支操作。
-4. 当仓库根目录存在 AGENT.md 时，视为项目级最高优先级补充规则并严格遵循。`, cwd, getOS())
-
-	if skill := strings.TrimSpace(skills.LoadAgentMarkdown(cwd)); skill != "" {
-		base += "\n\n项目代理配置文件(AGENT.md)：\n" + skill
-	}
-	return base
+	base := prompt.BuildBase(cwd, getOS(), cfg.LLM.Provider, runMode)
+	agentMD := strings.TrimSpace(skills.LoadAgentMarkdown(cwd))
+	return prompt.BuildWithTemplate(cfg.Prompt.TemplateFile, base, agentMD)
 }
 
 func getOS() string {

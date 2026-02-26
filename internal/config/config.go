@@ -15,7 +15,13 @@ type Config struct {
 	Context ContextConfig `yaml:"context"`
 	Tools   ToolsConfig   `yaml:"tools"`
 	TUI     TUIConfig     `yaml:"tui"`
+	Prompt  PromptConfig  `yaml:"prompt"`
 	Ext     ExtensionsConfig `yaml:"extensions"`
+}
+
+// PromptConfig 系统提示词模板配置
+type PromptConfig struct {
+	TemplateFile string `yaml:"template_file"`
 }
 
 // LLMConfig 通用 LLM 配置（支持 OpenAI 兼容后端）
@@ -91,6 +97,9 @@ func Default() Config {
 			Theme:          "dark",
 			ShowTokenCount: true,
 			QuietStartup:   false,
+		},
+		Prompt: PromptConfig{
+			TemplateFile: "",
 		},
 		Ext: ExtensionsConfig{
 			ToolFiles:    nil,
